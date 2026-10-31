@@ -77,7 +77,7 @@ describe('the manifest', () => {
 
   test('has an icon a host draws, and no other module’s', () => {
     expect(isModuleIcon(MANIFEST.icon)).toBe(true)
-    expect(MANIFEST.icon).toBe('lucide:message-square-code')
+    expect(MANIFEST.icon).toBe('brand:opencode')
   })
 
   test('says what its MCP door is to be registered as, in a shape the protocol takes', () => {
