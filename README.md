@@ -68,6 +68,12 @@ framing it: a session belongs to a project, and only a host says which.
   model, and **the cost** (OpenCode's own sum, from its database) — more than Codex gives. With
   **Compact** (`/compact`) and **Clear** (`/clear`) typed only on a person's press, only while
   OpenCode waits at its prompt.
+- **The footer.** In an app that draws module footers (protocol 2.38.0, `kehikot.footer`), the
+  context meter, the model, **Compact** and **Clear** (Clear with the app's confirm, neither for
+  agents) and the notes along the bottom — folder renamed, modules changed, session ended, install
+  failed, each with its button as a run (and the install log as a toggle) — are declared as footer
+  items (`src/view/footer.ts`) and the page draws none of its own. Any other app gets no footer and
+  the page draws its own line and rows as before.
 - **Settings**: resume cut-off conversations; the model (`--model provider/model`); the agent
   (`--agent`); "Before editing or running commands" (`permission.edit: ask`, `bash: { "*": ask }`).
   Each a person's. None can make OpenCode ask less.
