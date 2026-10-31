@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 
 import { contextWords, costSaid, percentOf, tokensSaid, type Context } from '../../meter.ts'
+import { CLEAR_MEANS, COMPACT_MEANS } from './footer.ts'
 import { Button } from '@/components/ui/button'
 
 /**
@@ -32,8 +33,6 @@ const SAID_MS = 6_000
 
 /** What the line says while Clear is armed: that the session starts over, and that the old one is kept. */
 export const CLEAR_ARMED = 'Clear starts this session over as a new conversation. This one is kept: reopen it from the View menu or with /sessions. Press Clear again to clear.'
-const COMPACT_MEANS = 'Compact: OpenCode’s own /compact, typed at the prompt — the conversation so far is summarised, and the window holds the summary.'
-const CLEAR_MEANS = 'Clear: OpenCode’s own /clear (its /new), typed at the prompt — a new conversation starts here. This one is kept and can be reopened.'
 /** What cannot be known from here, said in the breakdown rather than guessed. */
 export const NO_SPLIT = 'How the window splits into instructions, tools and messages is not reported: OpenCode says totals for each answer.'
 
