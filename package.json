@@ -1,6 +1,6 @@
 {
   "name": "kehikko-opencode",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "description": "OpenCode, a module a Kehikot host frames: a terminal holding the OpenCode session that belongs to the place you are looking at.",
