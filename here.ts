@@ -7,33 +7,36 @@ import { folderOfRecord, type Program } from './program.ts'
 import { assign, homeOf, ownOf, projectRoot, readPlaces, tokenFor, type NamedPlace, type Places } from './record.ts'
 
 /**
- * `$kehikot-here`: a person types it in a Codex conversation, and that conversation is
+ * `/kehikot-here`: a person types it in an OpenCode conversation, and that conversation is
  * assigned to the kehikko they have on screen.
  *
- * A conversation started from a Codex container does not need it: it is filed under the place it
- * was started at by itself, the same way (`autoFile` in context.ts). `$kehikot-here` is for one
- * started anywhere else, and for moving one.
+ * A conversation started from an OpenCode container does not need it: it is filed under the place
+ * it was started at by itself, the same way (`autoFile` in context.ts). `/kehikot-here` is for
+ * moving one, or for one carried into this process with OpenCode's own `/sessions`.
  *
- * ## Why a skill can, where the MCP door cannot
+ * ## Why the plugin can, where the MCP door cannot
  *
- * Codex never tells an MCP server which conversation is calling. A command it runs is different:
- * Codex sets `CODEX_THREAD_ID` to the conversation's own id for every command (measured on
- * 0.164.0). The skill (`plugin/skills/kehikot-here/SKILL.md`, in Codex's format) has the model run
- * one `curl` to `POST /api/here?session=$CODEX_THREAD_ID&say=<words>` on this module's port —
- * outside the sandbox, which blocks loopback, so the person approves it — and repeat the answer.
- * Its `agents/openai.yaml` keeps the model from using it unasked.
+ * OpenCode never tells an MCP server which conversation is calling. A tool of a plugin is handed
+ * it: the session's plugin (`plugin/opencode/kehikot.js`) gives OpenCode the tool `kehikot_here`,
+ * whose `execute` receives the conversation's own `sessionID`. The skill
+ * (`plugin/skills/kehikot-here/SKILL.md`, a `/kehikot-here` command in OpenCode) has the model call
+ * that tool once with the person's words, and repeat the answer. The plugin posts
+ * `POST /api/here?session=<id>&say=<words>` with its run's secret: no shell, no curl, nothing for
+ * the person to approve.
  *
  * ## What the door believes, and what it does not
  *
- * Anything on this machine can reach the door without a ticket, so the id it is given is a claim.
- * It is believed only for a conversation a Codex process holds RIGHT NOW (its lock file, `active`
- * in program.ts), and only in that conversation's own folder: the folder its record names is the
- * project, and it must be a project the host holds. When that cannot be asked, the record's folder
- * has to be a project this server knows. An id nothing has seen is refused.
+ * Anything on this machine can reach the door, so the id it is given is a claim. It is believed
+ * at once when the post carries the secret of a run this module holds (`vouched`, `Runs.vouch`):
+ * the plugin is in that very process, in that run's project. Otherwise only for a conversation an
+ * `opencode` process was started on RIGHT NOW (`active` in program.ts), in that conversation's own
+ * folder: the folder its record names is the project, and it must be a project the host holds.
+ * When that cannot be asked, the record's folder has to be a project this server knows. An id
+ * nothing has seen is refused.
  *
  * The target is never guessed: the place a framed page of this module has on screen in that
- * project, with a Codex container on the open kehikko (`Runs.showingIn`). None, or more than one,
- * is said with the kehikot to choose from (`kehikko: <key>`), and nothing is written.
+ * project, with an OpenCode container on the open kehikko (`Runs.showingIn`). None, or more than
+ * one, is said with the kehikot to choose from (`kehikko: <key>`), and nothing is written.
  *
  * What it can do is what "Assign here" in the container does: file one conversation under one
  * place of its own project, and make it that place's own when it had none or `own` was said. It
@@ -45,6 +48,8 @@ export const SAID = 'Kehikot:'
 
 export interface HereNeeds {
   program: Program
+  /** The project of the run whose own secret the post carried (`Runs.vouch`): believed without asking anything else. */
+  vouched?: string | null
   /** The places pages have on screen in a project, latest first (`Runs.showingIn`). */
   showingIn(projectPath: string): Showing[]
   /** The projects this server knows: where a record is looked for when the program cannot be asked. */
@@ -56,7 +61,7 @@ export interface HereNeeds {
   env?: NodeJS.ProcessEnv
 }
 
-/** What a person can add after `$kehikot-here`. */
+/** What a person can add after `/kehikot-here`. */
 export function readSay(say: string): { own: boolean; kehikko: string | null } | null {
   let rest = ` ${say.slice(0, 200)} `
   let kehikko: string | null = null
@@ -88,9 +93,10 @@ const titleOf = (places: Places, id: string): string => {
 
 /**
  * Where a conversation is running, as the program says — the folder its record names, for one a
- * Codex process holds now (its lock file) — or, when that cannot be asked, where its record is.
+ * process holds now (vouched by its own plugin, or started on it) — or, when that cannot be asked, where its record is.
  */
 async function folderOf(id: string, needs: HereNeeds): Promise<{ folder: string; via: 'running' | 'record' } | null> {
+  if (needs.vouched) return { folder: needs.vouched, via: 'running' }
   const found = needs.program.find(needs.env)
   if (found.file && (await needs.program.supports(found.file)).lists) {
     const running = await needs.program.active(found.file, needs.env)
@@ -112,11 +118,11 @@ function choices(places: Places | null, showing: readonly Showing[]): string[] {
   const lines = new Map<string, string>()
   for (const one of showing) {
     const key = one.place.kehikko && 'key' in one.place.kehikko ? one.place.kehikko.key : null
-    if (key && !lines.has(key)) lines.set(key, `$kehikot-here kehikko: ${key}  (${placeWords(one.place)}, on screen)`)
+    if (key && !lines.has(key)) lines.set(key, `/kehikot-here kehikko: ${key}  (${placeWords(one.place)}, on screen)`)
   }
   for (const entry of Object.values(places?.places ?? {})) {
     const key = entry.kehikko && 'key' in entry.kehikko ? entry.kehikko.key : null
-    if (key && !lines.has(key)) lines.set(key, `$kehikot-here kehikko: ${key}  (${entry.kehikko?.name || 'a kehikko'})`)
+    if (key && !lines.has(key)) lines.set(key, `/kehikot-here kehikko: ${key}  (${entry.kehikko?.name || 'a kehikko'})`)
   }
   return [...lines.values()].slice(0, 12)
 }
@@ -124,22 +130,22 @@ function choices(places: Places | null, showing: readonly Showing[]): string[] {
 const listed = (lines: readonly string[]): string => lines.map((line) => `\n  ${line}`).join('')
 
 /**
- * Do what `$kehikot-here <say>` asks for the conversation `id`, and say what was done in one
+ * Do what `/kehikot-here <say>` asks for the conversation `id`, and say what was done in one
  * answer for the person — always starting with `SAID`. Nothing is written unless it says
  * "Assigned".
  */
 export async function here(id: string, say: string, needs: HereNeeds): Promise<string> {
-  if (!needs.program.isId(id)) return `${SAID} That is not a Codex conversation’s id, so nothing was assigned.`
+  if (!needs.program.isId(id)) return `${SAID} That is not an OpenCode conversation’s id, so nothing was assigned.`
   const asked = readSay(say)
-  if (!asked) return `${SAID} $kehikot-here takes “own” and “kehikko: <key>”, and nothing else. Nothing was assigned.`
+  if (!asked) return `${SAID} /kehikot-here takes “own” and “kehikko: <key>”, and nothing else. Nothing was assigned.`
 
   const where = await folderOf(id, needs)
   if (!where) {
-    return `${SAID} Codex does not list this conversation as running, and no Kehikot project has its record, so nothing was assigned.`
+    return `${SAID} OpenCode does not list this conversation as running, and no Kehikot project has its record, so nothing was assigned.`
   }
   const root = projectRoot(where.folder)
   if (!root.ok || !(await needs.hostHas(root.value))) {
-    return `${SAID} This conversation runs in ${where.folder}, which is not a project in Kehikot, so nothing was assigned. Open that folder as a project, or type $kehikot-here in a conversation started in one.`
+    return `${SAID} This conversation runs in ${where.folder}, which is not a project in Kehikot, so nothing was assigned. Open that folder as a project, or type /kehikot-here in a conversation started in one.`
   }
   const project = root.value
   const name = basename(project)
@@ -157,20 +163,20 @@ export async function here(id: string, say: string, needs: HereNeeds): Promise<s
       const kept = Object.values(places?.places ?? {}).filter((entry) => onIt(entry))
       if (kept.length === 1) place = { ...placeOf(kept[0]!) }
       else if (kept.length > 1) {
-        return `${SAID} The kehikko ${kept[0]!.kehikko?.name || key} has ${kept.length} places in ${name} (${kept.map((entry) => (entry.epic ?? 'no epic') + (entry.parts.length ? ` · ${entry.parts.join(' + ')}` : '')).join('; ')}), so nothing was assigned. Open it with the epic and parts you mean, and type $kehikot-here again.`
+        return `${SAID} The kehikko ${kept[0]!.kehikko?.name || key} has ${kept.length} places in ${name} (${kept.map((entry) => (entry.epic ?? 'no epic') + (entry.parts.length ? ` · ${entry.parts.join(' + ')}` : '')).join('; ')}), so nothing was assigned. Open it with the epic and parts you mean, and type /kehikot-here again.`
       } else {
         const can = choices(places, showing)
-        return `${SAID} No kehikko ${key} with a Codex container is known in ${name}, so nothing was assigned.${can.length ? ` Type one of:${listed(can)}` : ''}`
+        return `${SAID} No kehikko ${key} with an OpenCode container is known in ${name}, so nothing was assigned.${can.length ? ` Type one of:${listed(can)}` : ''}`
       }
     }
   } else if (showing.length === 1) {
     place = showing[0]!.place
   } else if (showing.length > 1) {
-    return `${SAID} ${showing.length} kehikot with a Codex container are on screen in ${name}, so nothing was assigned. Say which:${listed(choices(places, showing))}`
+    return `${SAID} ${showing.length} kehikot with an OpenCode container are on screen in ${name}, so nothing was assigned. Say which:${listed(choices(places, showing))}`
   } else {
     const can = choices(places, [])
     return (
-      `${SAID} No kehikko with a Codex container is on screen in ${name}, so nothing was assigned. Open the kehikko this conversation belongs to and type $kehikot-here again`
+      `${SAID} No kehikko with an OpenCode container is on screen in ${name}, so nothing was assigned. Open the kehikko this conversation belongs to and type /kehikot-here again`
       + (can.length ? `, or name one:${listed(can)}` : '.')
     )
   }
@@ -182,7 +188,7 @@ export async function here(id: string, say: string, needs: HereNeeds): Promise<s
   if (homeOf(before as Places, id) === key && (hadOwn === id || !asked.own)) {
     return hadOwn === id
       ? `${SAID} This conversation is already this kehikko’s own (${said}). Nothing changed.`
-      : `${SAID} This conversation is already assigned to ${said}; ${titleOf(before as Places, hadOwn!)} is this kehikko’s own. Type $kehikot-here own to make this one its own instead.`
+      : `${SAID} This conversation is already assigned to ${said}; ${titleOf(before as Places, hadOwn!)} is this kehikko’s own. Type /kehikot-here own to make this one its own instead.`
   }
   const written = assign(project, place, id, { own: asked.own })
   if (!written.ok) return `${SAID} The record could not be written (${written.error}), so nothing was assigned.`
@@ -193,5 +199,5 @@ export async function here(id: string, say: string, needs: HereNeeds): Promise<s
   if (!hadOwn) return `${SAID} Assigned to ${said}. It’s now this kehikko’s own (it had none).`
   if (hadOwn === id) return `${SAID} Assigned to ${said}. It is this kehikko’s own.`
   if (asked.own) return `${SAID} Assigned to ${said}, as this kehikko’s own: it replaced ${titleOf(before as Places, hadOwn)}.`
-  return `${SAID} Assigned to ${said}. ${titleOf(before as Places, hadOwn)} stays this kehikko’s own conversation; type $kehikot-here own to make this one its own instead.`
+  return `${SAID} Assigned to ${said}. ${titleOf(before as Places, hadOwn)} stays this kehikko’s own conversation; type /kehikot-here own to make this one its own instead.`
 }

@@ -73,7 +73,7 @@ export interface Said {
    * nothing was started: who has it. Said just before the socket is closed.
    */
   elsewhere?: Elsewhere
-  /** This is a view of a session Codex runs in the background: the process that holds it. */
+  /** This is a view of a session OpenCode runs in the background: the process that holds it. */
   background?: Elsewhere
   /** This is a copy, opened on purpose beside another process that has the conversation: that process. */
   copyOf?: Elsewhere
@@ -277,7 +277,7 @@ export function TerminalView({
     })
 
     /* Fitted and sent once the box has held still, not on every frame of it moving (`settle-size.ts`):
-       each size is a SIGWINCH, and Codex reprints its conversation on every one, leaving the
+       each size is a SIGWINCH, and OpenCode reprints its conversation on every one, leaving the
        last copy in the scrollback — nine of them for one 200ms animation of the host's grid. */
     const settled = settleSize(
       () => {

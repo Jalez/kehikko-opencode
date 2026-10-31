@@ -13,7 +13,7 @@ import { COPY, LEAVE, MARKS, ago, brief, decide, elsewhereSaid, noticeLine, plac
 const row = (id: string, more: Partial<Row> = {}): Row => ({ id, label: '', lastActive: null, running: false, ...more })
 const listing = (sessions: Row[], program: Partial<Listing['program']> = {}): Listing => ({
   ok: true,
-  program: { name: 'Codex', found: '/bin/claude', foundAt: '/bin/claude', looked: [], where: 'PATH', lacks: null, install: { line: 'install', lands: '~/.local/bin/claude' }, asked: 'yes', ...program },
+  program: { name: 'OpenCode', found: '/bin/claude', foundAt: '/bin/claude', looked: [], where: 'PATH', lacks: null, install: { line: 'install', lands: '~/.local/bin/claude' }, asked: 'yes', ...program },
   sessions,
   others: [],
   running: [],
@@ -253,22 +253,22 @@ describe('a place with no session', () => {
 
 describe('the words for a session that is open somewhere else', () => {
   const NOW = Date.parse('2026-10-12T12:00:00Z')
-  const terminal = { kind: 'interactive' as const, called: 'a Codex process', pid: 82070, cwd: '/Users/someone/Projects/thesis', since: null, name: '' }
+  const terminal = { kind: 'interactive' as const, called: 'an OpenCode process', pid: 82070, cwd: '/Users/someone/Projects/thesis', since: null, name: '' }
 
   test('say where it is open, from what the lock file says', () => {
-    expect(whereWords(terminal, NOW)).toBe('a Codex process in a terminal, an editor or the Codex app, process 82070, in /Users/someone/Projects/thesis')
+    expect(whereWords(terminal, NOW)).toBe('an OpenCode process in a terminal, an editor or the OpenCode app, process 82070, in /Users/someone/Projects/thesis')
     /* What was not said is left out, not made up. */
     expect(whereWords({ kind: 'other', called: 'sdk', pid: null, cwd: '', since: null, name: '' }, NOW)).toBe('a “sdk” session')
   })
 
   test('the question says what is true and that nothing has been started', () => {
-    expect(elsewhereSaid('Codex', 'tighten the methods', terminal, NOW)).toBe(
-      '“tighten the methods” is already open in another Codex process on this computer: a Codex process in a terminal, an editor or the Codex app, process 82070, in /Users/someone/Projects/thesis. Nothing has been started here.',
+    expect(elsewhereSaid('OpenCode', 'tighten the methods', terminal, NOW)).toBe(
+      '“tighten the methods” is already open in another OpenCode process on this computer: an OpenCode process in a terminal, an editor or the OpenCode app, process 82070, in /Users/someone/Projects/thesis. Nothing has been started here.',
     )
-    expect(elsewhereSaid('Codex', '', null, NOW)).toBe('This conversation is already open in another Codex process on this computer. Nothing has been started here.')
+    expect(elsewhereSaid('OpenCode', '', null, NOW)).toBe('This conversation is already open in another OpenCode process on this computer. Nothing has been started here.')
   })
 
-  test('the two answers are in words, and opening it anyway says what Codex will do before it is chosen', () => {
+  test('the two answers are in words, and opening it anyway says what OpenCode will do before it is chosen', () => {
     expect(LEAVE.word).toBe('Leave it')
     expect(LEAVE.means).toContain('the other process is not touched')
     expect(COPY.word).toBe('Open it here anyway')
@@ -277,12 +277,12 @@ describe('the words for a session that is open somewhere else', () => {
   })
 
   test('a session on screen says what it is when it is not simply this module’s own', () => {
-    expect(standingWords(undefined, 'Codex', NOW)).toBeNull()
-    expect(standingWords({}, 'Codex', NOW)).toBeNull()
-    const copy = standingWords({ copyOf: terminal }, 'Codex', NOW)
+    expect(standingWords(undefined, 'OpenCode', NOW)).toBeNull()
+    expect(standingWords({}, 'OpenCode', NOW)).toBeNull()
+    const copy = standingWords({ copyOf: terminal }, 'OpenCode', NOW)
     expect(copy?.word).toBe('also open')
-    expect(copy?.means).toContain('Opened here while another Codex process has it (a Codex process in a terminal, an editor or the Codex app, process 82070')
-    expect(standingWords({ unchecked: 'too-old' }, 'Codex', NOW)?.means).toBe('Resumed without checking whether it is already open somewhere else: this Codex cannot be asked. Update it to have that checked.')
-    expect(standingWords({ unchecked: 'failed' }, 'Codex', NOW)?.means).toContain('could not be asked')
+    expect(copy?.means).toContain('Opened here while another OpenCode process has it (an OpenCode process in a terminal, an editor or the OpenCode app, process 82070')
+    expect(standingWords({ unchecked: 'too-old' }, 'OpenCode', NOW)?.means).toBe('Resumed without checking whether it is already open somewhere else: this OpenCode cannot be asked. Update it to have that checked.')
+    expect(standingWords({ unchecked: 'failed' }, 'OpenCode', NOW)?.means).toContain('could not be asked')
   })
 })

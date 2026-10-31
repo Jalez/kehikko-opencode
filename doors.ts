@@ -10,7 +10,7 @@ import { PLACE_TOKEN, WHERE, assign, detach, follow, homeOf, ownOf, projectRoot,
 import { here } from './here.ts'
 import { EVENT_IDS } from './events.ts'
 import { isSkillPath, serveFrom, skillAt, skillDeclarations } from './skills.ts'
-import { contextWords, costSaid, percentOf, type Context } from './meter.ts'
+import { contextWords, costSaid, percentOf, usageOf, type Context } from './meter.ts'
 
 /**
  * The HTTP doors, as one function: `answer` takes a request and returns a
@@ -55,7 +55,7 @@ export { TICKET }
 
 /**
  * The manifest as served: the one in manifest.ts with the skills this module offers (skills.ts),
- * written for Codex. It installs them itself (`installsSkills`), so a host shows them and installs
+ * written for OpenCode. It installs them itself (`installsSkills`), so a host shows them and installs
  * none of them for Claude Code.
  */
 export const MANIFEST: Manifest = manifestSchema.parse({ ...DECLARED, declares: { ...DECLARED.declares, skills: skillDeclarations() } })
@@ -88,7 +88,7 @@ const bad = (why: string, status = 400): Reply => ({ status, body: { ok: false, 
 
 /**
  * This project's settings at the module's door, for the host (protocol 2.15.0): `settings.get` and
- * `settings.set` at `/api/kehikot/settings`, over the same `.kehikot/codex/settings.json` the
+ * `settings.set` at `/api/kehikot/settings`, over the same `.kehikot/opencode/settings.json` the
  * page's toggle writes. A program's door like `/api/kehikot/place`, for a project the host holds.
  * "Resume conversations cut off by a restart" is the person's: a change is taken only with the
  * page's ticket or a pass the host vouches for, asked of the origins the host started this module
@@ -119,7 +119,7 @@ const settings = settingsDoor({
 /** One session, as a row in a list. */
 export interface Row {
   id: string
-  /** What it is called: its name, else Codex's title for it, else its first prompt. `''` when it has none yet. */
+  /** What it is called: its name, else OpenCode's title for it, else its first prompt. `''` when it has none yet. */
   label: string
   /** The first line of its first prompt, when that is not already the label. */
   firstPrompt?: string
@@ -139,14 +139,14 @@ export interface Row {
   state?: State
   since?: number
   /**
-   * Set when the record lists it for this place and Codex has nothing
+   * Set when the record lists it for this place and OpenCode has nothing
    * by that id on this computer: it ran on another one, or its transcript has
    * been cleaned away here. It cannot be opened, and is shown so that the
    * list agrees with the file.
    */
   missing?: true
   /**
-   * Set when Codex is running it in a process this module did not
+   * Set when OpenCode is running it in a process this module did not
    * start, as the program itself said a moment ago (`agents --json`):
    * `background` is a session with no terminal, and opening it here attaches
    * to it — no second process; anything else is open in a terminal or an
@@ -161,8 +161,8 @@ export interface Row {
    */
   as?: 'background' | 'copy'
   /**
-   * How full its context window is, its model, cost and compactions, as its transcript and — for
-   * one started here — its own status line say (meter.ts). Only on the place's own rows; absent
+   * How full its context window is, its model, cost and compactions, as its plugin and — for
+   * the cost — its record say (meter.ts). Only on the place's own rows; absent
    * when nothing is known.
    */
   context?: Context
@@ -226,7 +226,7 @@ export interface Listing {
 
 /**
  * A session's context as the MCP tool says it: the figures, and one line in words. What cannot be
- * known is said as such: `windowFromCodex` is false until Codex has said its window, and the split
+ * known is said as such: `windowFromOpenCode` is false until OpenCode has said its window, and the split
  * of the window by kind (instructions, tools, messages) is written nowhere.
  */
 export function contextSaid(context: Context) {
@@ -234,7 +234,7 @@ export function contextSaid(context: Context) {
     said: `${contextWords(context).line}${context.soon ? ' — compacts soon' : ''}`,
     tokens: context.tokens,
     window: context.window,
-    windowFromCodex: context.windowSure,
+    windowFromOpenCode: context.windowSure,
     percent: context.percent,
     compactsAtAbout: context.compactAt,
     compactsAtPercent: percentOf(context.compactAt, context.window),
@@ -346,7 +346,7 @@ export async function listing(
      moment from now is asked again when a session is opened (live.ts). */
   const running: Running = found.file && able.ok ? await runs.running(found.file) : { known: false, why: 'failed' }
 
-  /* A conversation Codex carried on under a new id is listed under the new one: the old id
+  /* A conversation OpenCode carried on under a new id is listed under the new one: the old id
      is a step behind it, and opening it would start another copy of an old point in it. The
      record is brought along, so that the next open — here or anywhere — goes straight there. */
   const holding = new Set<string>([...(running.known ? running.active.map((one) => one.session) : []), ...runs.sessions().flatMap((run) => (run.settled ? [run.settled] : []))])
@@ -474,20 +474,20 @@ function tools() {
       description:
         `The ${PROGRAM.name} sessions a person keeps in a project, by place. A place is an epic, the set of parts picked `
         + 'out of it and a kehikko; each lists its sessions with the first line of their first prompt, when each was '
-        + 'last active, whether it is running now, and `missing: true` when Codex has no record of it on this '
+        + 'last active, whether it is running now, and `missing: true` when OpenCode has no record of it on this '
         + 'computer (sessions stay on the computer they ran on). A running session that has said so also has `state` — '
         + '`working` (a turn is under way), `needs-you` (it has stopped at a question only its person can answer) or '
         + '`finished` (its turn is over and it is at its prompt) — and `since`. No `state` means it has not said, not that '
-        + 'it is idle. `runningElsewhere` is on a session a Codex process this module did not start holds open (a '
-        + 'terminal, an editor, the Codex app): its person is asked before it is opened here. '
-        + '`context`, when its transcript says it, is how full its context window is: `tokens` of `window` and '
-        + '`percent`, as Codex itself counts them; about where Codex compacts it by itself and `compactsSoon` near '
-        + 'there; the model; and how often it was `compacted`. Codex reports no cost. '
+        + 'it is idle. `runningElsewhere` is on a session an OpenCode process this module did not start holds open (a '
+        + 'terminal, an editor, the OpenCode app): its person is asked before it is opened here. '
+        + '`context`, once the session has answered since it was opened here, is how full its context window is: `tokens` of `window` and '
+        + '`percent`, as OpenCode itself counts them; about where OpenCode compacts it by itself and `compactsSoon` near '
+        + 'there; the model; what it cost, as OpenCode priced it; and how often it was `compacted`. '
         + `Read from ${WHERE}. Give the absolute project directory as `
         + 'project, and an epic slug to see only that epic’s places. Give `place` — the epic, the picked parts and '
         + 'the kehikko — to be told in words what opening the module there will do: a place with sessions opens one at '
         + 'once (the one last open there, else its own, else the most recently active); a place with none starts a new '
-        + 'one and says that no conversation is connected, which the person does by typing $kehikot-here in the one they '
+        + 'one and says that no conversation is connected, which the person does by typing /kehikot-here in the one they '
         + 'want there. Nothing is offered from the rest of the project. Reads only: nothing here starts, ends, attaches '
         + 'or types into a session.',
       inputSchema: {
@@ -544,7 +544,7 @@ function tellFinished(args: Record<string, unknown>, token: string | null): stri
   const said = token ? theRuns().tellFinished(token, event, label) : null
   if (said === null) {
     throw new Error(
-      'This conversation is not one Kehikot’s Codex module is running with its doors (it was not started from the Codex container, '
+      'This conversation is not one Kehikot’s OpenCode module is running with its doors (it was not started from the OpenCode container, '
       + 'or it has ended), so there is no item of its own to tag. Nothing was told.',
     )
   }
@@ -582,7 +582,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<string
   const runs = theRuns()
   const live = runs.sessions()
   const running = await runs.running()
-  /* Each listed session's context, read from its transcript (only what was appended since the last look). */
+  /* Each listed session's context, as its plugin reported it and its record prices it. */
   const ids = [...new Set([...recordedIds(read.value), ...recorded.map((one) => one.id), ...live.map((run) => run.settled ?? run.id)])].slice(0, 300)
   const contexts = new Map(await Promise.all(ids.map(async (id) => [id, await runs.contextOf(root.value, id).catch(() => null)] as const)))
   const session = (id: string) => {
@@ -635,7 +635,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<string
     return (
       `This place (${key}) has no conversation connected. Opening the module here starts a new ${PROGRAM.name} conversation in the project’s folder, `
       + 'which becomes this place’s once its person says something in it, and says above it that none is connected: '
-      + `typing $kehikot-here in another conversation connects that one instead. Nothing is offered from the project’s other sessions.${kept}`
+      + `typing /kehikot-here in another conversation connects that one instead. Nothing is offered from the project’s other sessions.${kept}`
     )
   }
 
@@ -654,7 +654,7 @@ async function call(name: string, args: Record<string, unknown>): Promise<string
     if (!loose.length) return said
     return (
       `${said} ${PROGRAM.name} has ${loose.length} session${loose.length === 1 ? '' : 's'} for the folder that ${epic ? 'no place of that epic holds' : loose.length === 1 ? 'belongs to no place' : 'belong to no place'}: `
-      + `none is connected to a place until $kehikot-here is typed in it.${unasked}\n${JSON.stringify(loose, null, 2)}`
+      + `none is connected to a place until /kehikot-here is typed in it.${unasked}\n${JSON.stringify(loose, null, 2)}`
     )
   }
   return JSON.stringify(places, null, 2)
@@ -733,16 +733,17 @@ export async function answer(
      asked for, because it does not have one: see "One door is not the page's". */
   if (path === '/api/state') {
     if (method !== 'POST') return bad('this door takes POST', 405)
-    /* `thread` is the conversation Codex says the hook is in: a session id, or nothing. */
+    /* `thread` is the conversation OpenCode says the plugin heard: a session id, or nothing. */
     const thread = query.get('thread') ?? ''
-    /* A subagent's thread and role, on SubagentStart and SubagentStop only (research.ts): checked again in `heard`. */
+    /* A subagent's session, agent and task, on SubagentStart and SubagentStop only (research.ts): checked again in `heard`. */
     const agent = query.get('agent')
     const took = theRuns().heard(
       query.get('session') ?? '',
       ticket,
       query.get('event') ?? '',
       PROGRAM.isId(thread) ? thread : null,
-      agent ? { id: agent.slice(0, 64), type: query.get('type')?.slice(0, 64) ?? null } : null,
+      agent ? { id: agent.slice(0, 64), type: query.get('type')?.slice(0, 64) ?? null, task: query.get('task')?.slice(0, 300) ?? null } : null,
+      query.get('event') === 'Usage' ? usageOf(query) : null,
     )
     return took ? { status: 204, body: null } : bad('that is not a running session’s own report', 403)
   }
@@ -756,15 +757,17 @@ export async function answer(
     return ok({ ok: true, place: theRuns().placeOf(token, query.get('project')) })
   }
 
-  /* `$kehikot-here`, typed by a person in a Codex conversation (see here.ts): the skill
-     posts the conversation's own id. A program's door, with no ticket, so the id is a claim, and
-     it is believed only for a conversation Codex lists as running in a project the host
-     holds. The answer is plain text, which the skill repeats word for word. */
+  /* `/kehikot-here`, typed by a person in an OpenCode conversation (see here.ts): the session's
+     plugin posts the conversation's own id, with its run's secret. Without that secret the id is
+     a claim, believed only for a conversation an OpenCode process was started on in a project the
+     host holds. The answer is plain text, which the skill repeats word for word. */
   if (path === '/api/here') {
     if (method !== 'POST') return bad('this door takes POST', 405)
     const runs = theRuns()
-    const said = await here((query.get('session') ?? '').slice(0, 64), query.get('say') ?? '', {
+    const session = (query.get('session') ?? '').slice(0, 64)
+    const said = await here(session, query.get('say') ?? '', {
       program: PROGRAM,
+      vouched: runs.vouch(session, ticket),
       showingIn: (project) => runs.showingIn(project),
       knownProjects: () => runs.knownProjects(),
       hostHas: (folder) => hostCheck.has(folder),
@@ -773,11 +776,11 @@ export async function answer(
     return { status: 200, body: null, raw: { bytes: `${said}\n`, type: 'text/plain; charset=utf-8' } }
   }
 
-  /* A session's own hooks, through `context.sh` (see context.ts): at its start and at each prompt,
+  /* A session's own plugin (see context.ts): at its start and at each prompt,
      what it is to be told of its place and the modules on its kehikko — and the filing of it under
      the place it was started at. A program's door like `/api/state`: what it must carry is the
      session's place token, which this module wrote into that session's own plugin. The answer is
-     what Codex reads from a hook, or nothing (204). */
+     what OpenCode reads from a hook, or nothing (204). */
   if (path === '/api/context') {
     if (method !== 'POST') return bad('this door takes POST', 405)
     const said = await theRuns().context(query.get('event') ?? '', (query.get('session') ?? '').slice(0, 64), ticket)
@@ -826,7 +829,7 @@ export async function answer(
   if (path === '/api/settings' && method === 'POST') {
     const project = typeof body?.projectPath === 'string' ? body.projectPath : null
     const change = Object.entries(body ?? {}).filter(([key]) => key !== 'projectPath')
-    if (!change.length) return bad('say which setting changes: resumeCutOff, model, effort or approvals')
+    if (!change.length) return bad('say which setting changes: resumeCutOff, model, agent or approvals')
     for (const [key, value] of change) {
       const issue = settingIssue(key, value)
       if (issue) return bad(issue)
@@ -853,7 +856,7 @@ export async function answer(
   }
 
   /* A person's say about where a conversation belongs: "Make this the kehikko's own" for the one on
-     screen (`own`). `$kehikot-here` assigns through its own door below. */
+     screen (`own`). `/kehikot-here` assigns through its own door below. */
   if (path === '/api/assign' && method === 'POST') {
     const id = typeof body?.session === 'string' ? body.session : ''
     const key = typeof body?.key === 'string' ? body.key : ''
@@ -866,8 +869,8 @@ export async function answer(
     return written.ok ? ok({ ok: true }) : bad(written.error)
   }
 
-  /* What this page has on screen: its project, its place, and whether its kehikko has a Codex
-     container — what `$kehikot-here` assigns to. Said by the page on every change and as its feed
+  /* What this page has on screen: its project, its place, and whether its kehikko has an OpenCode
+     container — what `/kehikot-here` assigns to. Said by the page on every change and as its feed
      opens; kept only while that feed is open. */
   if (path === '/api/showing' && method === 'POST') {
     const page = typeof body?.page === 'string' && /^[A-Za-z0-9_-]{8,64}$/.test(body.page) ? body.page : null
@@ -949,7 +952,7 @@ export const stream: Stream = (method, path, query, emit, ticket) => {
     sessions: (project, assigned) => emit({ project, ...(assigned ?? {}) }, 'sessions'),
     context: (said) => emit(said, 'context'),
   })
-  /* A page that stops following has nothing on screen any more, as far as `$kehikot-here` knows. */
+  /* A page that stops following has nothing on screen any more, as far as `/kehikot-here` knows. */
   const close = () => {
     stop()
     fed?.()

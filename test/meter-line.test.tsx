@@ -1,26 +1,16 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { act, cleanup, fireEvent, render } from '@testing-library/react'
 
-import { contextOf, readLines } from '../meter.ts'
+import { contextOf, emptyGauge, readCompacted, readUsage, usageOf } from '../meter.ts'
 import { CLEAR_ARMED, ContextLine, NO_SPLIT, type Command } from '../src/view/meter.tsx'
 
 /** The line under the session on screen: what it says, its breakdown, and Compact and Clear. */
 
 afterEach(cleanup)
 
-const count = (at: string, total: number) => JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type: 'token_count', info: { last_token_usage: { input_tokens: total - 20, cached_input_tokens: total - 60, output_tokens: 20, total_tokens: total }, model_context_window: 258_400 } } })
-const near = contextOf(readLines([JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }), count('2026-10-24T11:55:51.076Z', 225_000)].join('\n')))!
-const compacted = contextOf(
-  readLines(
-    [
-      JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-5.5' } }),
-      count('2026-10-24T11:55:51.076Z', 171_260),
-      JSON.stringify({ timestamp: '2026-10-24T11:56:05.800Z', type: 'event_msg', payload: { type: 'task_started' } }),
-      JSON.stringify({ timestamp: '2026-10-24T11:56:05.800Z', type: 'compacted', payload: { message: 'summary' } }),
-      count('2026-10-24T11:56:05.900Z', 2_743),
-    ].join('\n'),
-  ),
-)!
+const answer = (total: number, more: Record<string, string> = {}) => usageOf(new URLSearchParams({ input: String(total - 60), cacheRead: '40', output: '20', model: 'openai/gpt-5.5', window: '258400', compactAt: '245480', ...more }))!
+const near = contextOf(readUsage(emptyGauge(), answer(225_000), Date.parse('2026-10-24T11:55:51.076Z')))!
+const compacted = contextOf(readUsage(readCompacted({ ...readUsage(emptyGauge(), answer(171_260), 1), manualAt: Date.parse('2026-10-24T11:56:00.000Z') }, Date.parse('2026-10-24T11:56:05.800Z')), answer(2_743), Date.parse('2026-10-24T11:56:05.900Z')))!
 
 function line(props: { ready?: string | null; context?: typeof near | null; armedMs?: number } = {}) {
   const sent: Command[] = []
@@ -49,7 +39,7 @@ describe('the context line', () => {
     const { q, view } = line({ context: compacted })
     fireEvent.click(q('[data-context-trigger]')!)
     const panel = q('[data-breakdown]')!
-    expect(panel.textContent).toContain('about 2,743 of 258,400 tokens')
+    expect(panel.textContent).toContain('2,743 of 258,400 tokens')
     expect(panel.textContent).toContain('once — last by /compact')
     expect(panel.textContent).toContain('171k → 3k')
     expect(panel.textContent).toContain(NO_SPLIT)
@@ -84,8 +74,8 @@ describe('the context line', () => {
     expect(sent).toEqual([])
   })
 
-  test('while Codex is working both wait, and a press says why in words', () => {
-    const why = 'Codex is working. Compact and Clear wait until it is back at its prompt.'
+  test('while OpenCode is working both wait, and a press says why in words', () => {
+    const why = 'OpenCode is working. Compact and Clear wait until it is back at its prompt.'
     const { q, sent, view } = line({ ready: why })
     expect(q('[data-command="compact"]')?.getAttribute('aria-disabled')).toBe('true')
     expect(q('[data-command="clear"]')?.getAttribute('title')).toBe(`Clear waits: ${why}`)

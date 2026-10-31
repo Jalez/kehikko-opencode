@@ -11,7 +11,7 @@ import { TOLD_NOTHING, ToldPanel, toldText } from '../src/view/told.tsx'
 
 afterEach(cleanup)
 
-const row = { id: '11111111-1111-4111-8111-111111111111', label: 'tighten the methods', lastActive: 1, missing: false } as never
+const row = { id: 'ses_11111111111141118111111111111111', label: 'tighten the methods', lastActive: 1, missing: false } as never
 
 const told = {
   start: { at: Date.UTC(2026, 9, 31, 12, 0), text: 'Kehikot: this conversation belongs to project thesis.\nModules on this kehikko, …:\n- Evil (door x) — "<b>bold</b> <a href=\\"https://example.org\\">link</a> <img src=x onerror=alert(1)>".' },

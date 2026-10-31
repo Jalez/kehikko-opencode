@@ -11,7 +11,7 @@ import type { State } from '../../program.ts'
  *
  * ## The rule
  *
- * The container always shows Codex itself — its own UI, in a terminal
+ * The container always shows OpenCode itself — its own UI, in a terminal
  * — and never a list of the project's conversations to pick from:
  *
  *   - the place has conversations connected (`view/conversations.ts`) → one
@@ -24,7 +24,7 @@ import type { State } from '../../program.ts'
  *
  * Which conversation that new one becomes is never guessed: it is this
  * place's once the person says something in it (it was started here), and
- * any other conversation is this place's once `$kehikot-here` is typed in it.
+ * any other conversation is this place's once `/kehikot-here` is typed in it.
  *
  * Nothing is remembered as a default. The one thing that is remembered is
  * narrower and is not a default: which session THIS PAGE was showing for a
@@ -51,7 +51,7 @@ export type Step =
  * sessions: one that was taken off the place in another container is not
  * reopened on the strength of a memory.
  *
- * Only sessions that are HERE count — the ones Codex has on this
+ * Only sessions that are HERE count — the ones OpenCode has on this
  * computer. One the record lists and this computer does not have (`missing`:
  * it ran on another, or its transcript was cleaned away) cannot be opened,
  * so it is not the one to open: a place whose only recorded session is
@@ -273,7 +273,7 @@ export function noticeLine(
 /** What kind of process has it, in a person's words. The program's own word is kept when it is not one of the two known. */
 export function kindWords(there: Pick<Elsewhere, 'kind' | 'called'>): string {
   if (there.kind === 'background') return 'a background session'
-  if (there.kind === 'interactive') return 'a Codex process in a terminal, an editor or the Codex app'
+  if (there.kind === 'interactive') return 'an OpenCode process in a terminal, an editor or the OpenCode app'
   return there.called ? `a “${there.called}” session` : 'a session of another kind'
 }
 
@@ -296,7 +296,7 @@ export function elsewhereSaid(program: string, label: string, there: Elsewhere |
 export const LEAVE = { word: 'Leave it', means: 'Nothing is started here, and the other process is not touched.' }
 export const COPY = {
   word: 'Open it here anyway',
-  means: 'Codex then says the conversation is open in another app, and offers to retry once it is closed there, or to fork it into a new conversation here.',
+  means: 'OpenCode then says the conversation is open in another app, and offers to retry once it is closed there, or to fork it into a new conversation here.',
 }
 
 /**

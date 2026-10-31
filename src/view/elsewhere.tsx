@@ -5,7 +5,7 @@ import { COPY, LEAVE, elsewhereSaid } from './places.ts'
 
 /**
  * The question, when the session a place would open is already open in
- * another Codex process (it holds the conversation's lock file).
+ * another OpenCode process (one started on that conversation).
  *
  * Nothing has been started and nothing will be until a person says. It is
  * drawn where the terminal would be — which is empty, since nothing was
@@ -14,14 +14,14 @@ import { COPY, LEAVE, elsewhereSaid } from './places.ts'
  *  - **Leave it.** First, and where the keyboard starts: Enter on a question
  *    somebody did not expect should start nothing.
  *  - **Open it here anyway.** With what that means said beside it, BEFORE it
- *    is chosen: Codex itself then says the conversation is open in another
+ *    is chosen: OpenCode itself then says the conversation is open in another
  *    app, and offers to retry once it is closed there, or to fork it.
  *
  * Neither does anything to the other process. There is no third row that
  * would: it may be in the middle of something.
  *
  * It says where the conversation is running and for how long from what
- * the lock file says: the process, and the folder its record names.
+ * `ps` says: the process, and the folder its record names.
  */
 export function ElsewhereQuestion({
   program,

@@ -4,7 +4,7 @@
  * The exact combination of the epic, the SET of parts picked out of it, and
  * the kehikko — inside one project. The project is not in the key because the
  * record that holds the keys is kept inside the project
- * (`<project>/.kehikot/codex/places.json`): a key read out of that file is
+ * (`<project>/.kehikot/opencode/places.json`): a key read out of that file is
  * already about that folder.
  *
  * ## What makes two places the same place

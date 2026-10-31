@@ -12,7 +12,7 @@
 # It does not register. That is `bun run register`, a person's decision.
 #
 # What this process is: it serves a page, and for that page it runs ONE
-# program in a pty — Codex, in the open project's folder — as you, with
+# program in a pty — OpenCode, in the open project's folder — as you, with
 # no sandbox between. It binds to 127.0.0.1 only. Do not put it behind a
 # tunnel or a reverse proxy.
 set -euo pipefail
@@ -58,7 +58,7 @@ if [ -n "$BUILT" ] && [ "$BUILT" = "$(git rev-parse HEAD 2>/dev/null)" ]; then
   exec bun run serve.ts
 fi
 if [ -n "$BUILT" ]; then
-  echo "codex: dist/ is a build of ${BUILT:0:7}, not of this checkout, so Vite serves the page. \`bun run build\` would make it current." >&2
+  echo "opencode: dist/ is a build of ${BUILT:0:7}, not of this checkout, so Vite serves the page. \`bun run build\` would make it current." >&2
 fi
 
 exec bunx vite $VITE_FORCE

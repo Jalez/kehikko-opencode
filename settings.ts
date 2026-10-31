@@ -1,25 +1,21 @@
 import { KEHIKOT_DIR, settingValueIssue, settingsDeclarationSchema, type SettingField } from 'kehikot-module-protocol'
 
 /**
- * Codex's settings as a host shows them (protocol 2.15.0, `declares.settings`), kept in the
- * project's `.kehikot/codex/settings.json` — the same file the page's toggle writes, in the same
- * format. Pure; the door is in `doors.ts`, the arguments a setting becomes are `sessionFlags`.
+ * OpenCode's settings as a host shows them (protocol 2.15.0, `declares.settings`), kept in the
+ * project's `.kehikot/opencode/settings.json` — the same file the page's toggle writes, in the same
+ * format. Pure; the door is in `doors.ts`, the arguments a setting becomes are `sessionFlags`, the
+ * configuration `permissionOf`.
  *
  * Each is the person's (`personOnly`): an agent is refused. Resuming a conversation a restart cut
- * off sends a sentence on the person's account; the model and its effort change what a session
- * costs; how often Codex asks before it acts is theirs to say.
+ * off sends a sentence on the person's account; the model and the agent change what a session does
+ * and costs; how often OpenCode asks before it acts is theirs to say.
  *
- * What is NOT a setting here, on purpose: the sandbox. A session opened here has the sandbox the
- * same `codex` would have in a terminal in that folder (the person's `config.toml`), and nothing
- * on this page or this door can widen it. The approval choice can only make Codex ask, or stop it
- * asking — never let a command out of the sandbox without asking (`--approve-for-me` and
- * `--dangerously-bypass-approvals-and-sandbox` are never passed).
+ * What is NOT a setting here, on purpose: anything that lets OpenCode act without asking where the
+ * person's own configuration asks (`--auto`, `permission: "allow"`). The approval choice can only
+ * make OpenCode ask more.
  */
 
-export const SETTINGS_FILE = `${KEHIKOT_DIR}/codex/settings.json`
-
-/** The reasoning efforts Codex 0.164.0 takes (`model_reasoning_effort`), and none: the model's own default. */
-const EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const
+export const SETTINGS_FILE = `${KEHIKOT_DIR}/opencode/settings.json`
 
 export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
   {
@@ -33,29 +29,27 @@ export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
   {
     key: 'model',
     label: 'Model for new sessions',
-    description: 'The model a session started or resumed here asks for, as Codex names it (for example gpt-5.5). Empty: what your Codex config says.',
+    description: 'The model a session started or resumed here asks for, as OpenCode names it: provider/model (for example anthropic/claude-sonnet-5-5). Empty: what your OpenCode config says.',
     type: 'string',
     default: '',
     personOnly: true,
   },
   {
-    key: 'effort',
-    label: 'Reasoning effort',
-    description: 'How hard the model thinks before it answers, for sessions started or resumed here. Your Codex config decides when this is left at its default.',
-    type: 'choice',
-    choices: [{ value: 'default', label: 'Codex config' }, ...EFFORTS.map((one) => ({ value: one, label: one }))],
-    default: 'default',
+    key: 'agent',
+    label: 'Agent',
+    description: 'The OpenCode agent a session starts with (build, plan, or one of yours). Empty: OpenCode’s default.',
+    type: 'string',
+    default: '',
     personOnly: true,
   },
   {
     key: 'approvals',
-    label: 'When Codex asks before acting',
-    description: 'Ask when it needs to: Codex asks before a command leaves its sandbox. Never ask: such a command fails and Codex is told. Neither lets anything out of the sandbox unasked.',
+    label: 'When OpenCode asks before acting',
+    description: 'Your OpenCode config: as it says. Before editing or running commands: OpenCode asks before it edits a file or runs a command, for sessions started here. Neither lets it do anything your config would ask about.',
     type: 'choice',
     choices: [
-      { value: 'default', label: 'Codex config' },
-      { value: 'on-request', label: 'Ask when it needs to' },
-      { value: 'never', label: 'Never ask' },
+      { value: 'default', label: 'OpenCode config' },
+      { value: 'ask', label: 'Before editing or running commands' },
     ],
     default: 'default',
     personOnly: true,
@@ -66,22 +60,25 @@ export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
 export interface Settings {
   resumeCutOff: boolean
   model: string
-  effort: string
+  agent: string
   approvals: string
 }
 
-export const DEFAULTS: Settings = { resumeCutOff: true, model: '', effort: 'default', approvals: 'default' }
+export const DEFAULTS: Settings = { resumeCutOff: true, model: '', agent: '', approvals: 'default' }
 
-/** A model name as Codex takes one: no spaces, no quotes, nothing that is not a model id. */
-const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,79}$/
+/** A model as OpenCode takes one: `provider/model`, no spaces, no quotes. */
+const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}\/[A-Za-z0-9][A-Za-z0-9._:@/-]{0,79}$/
+/** An agent's name: one word. */
+const AGENT = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/
 
-/** Why `value` cannot be setting `key`, or null. Beyond the protocol's type check: a model is one word. */
+/** Why `value` cannot be setting `key`, or null. Beyond the protocol's type check: a model is provider/model, an agent one word. */
 export function settingIssue(key: string, value: unknown): string | null {
   const field = SETTINGS.find((one) => one.key === key)
-  if (!field) return `Codex has no setting called "${key.slice(0, 64)}".`
+  if (!field) return `OpenCode has no setting called "${key.slice(0, 64)}".`
   const wrong = settingValueIssue(field, value)
   if (wrong) return `${field.label}: ${wrong}.`
-  if (key === 'model' && value !== '' && !MODEL.test(String(value))) return 'A model is one word, as Codex names it (for example gpt-5.5).'
+  if (key === 'model' && value !== '' && !MODEL.test(String(value))) return 'A model is provider/model, as OpenCode names it (for example anthropic/claude-sonnet-5-5).'
+  if (key === 'agent' && value !== '' && !AGENT.test(String(value))) return 'An agent is one word, as OpenCode names it (for example build or plan).'
   return null
 }
 
@@ -96,14 +93,25 @@ export function settingsOf(raw: unknown): Settings {
 }
 
 /**
- * The `-c` arguments a project's settings give a session started or resumed here: the model, its
- * effort, and when to ask. Nothing for a setting left at its default — the person's own Codex
- * config then decides, as in any terminal.
+ * The arguments a project's settings give a session started or resumed here: `--model` and
+ * `--agent`, OpenCode's own options. Nothing for a setting left at its default — the person's own
+ * OpenCode config then decides, as in any terminal.
  */
 export function sessionFlags(settings: Settings): string[] {
   const out: string[] = []
-  if (settings.model && MODEL.test(settings.model)) out.push('-c', `model=${JSON.stringify(settings.model)}`)
-  if ((EFFORTS as readonly string[]).includes(settings.effort)) out.push('-c', `model_reasoning_effort=${JSON.stringify(settings.effort)}`)
-  if (settings.approvals === 'on-request' || settings.approvals === 'never') out.push('-c', `approval_policy=${JSON.stringify(settings.approvals)}`)
+  if (settings.model && MODEL.test(settings.model)) out.push('--model', settings.model)
+  if (settings.agent && AGENT.test(settings.agent)) out.push('--agent', settings.agent)
   return out
+}
+
+/**
+ * What of the settings is configuration, for the session's own `opencode.json` (skills.ts): with
+ * "Before editing or running commands", `permission.edit` is `ask` and `permission.bash` asks for
+ * every command (`{ "*": "ask" }`). Nothing otherwise. OpenCode merges objects key by key, so a
+ * command pattern of the person's own (`"git status": "allow"`, `"rm *": "deny"`) is kept beside it.
+ * Where the person's config says one word for all of `bash` or `edit` (`"deny"`), this replaces it
+ * with asking: the person is asked, never skipped.
+ */
+export function permissionOf(settings: Settings): Record<string, string | Record<string, string>> {
+  return settings.approvals === 'ask' ? { edit: 'ask', bash: { '*': 'ask' } } : {}
 }

@@ -1,7 +1,3 @@
-import { open as openFile } from 'node:fs/promises'
-
-import { firstPrompt, recordFile } from './program.ts'
-
 /**
  * "Research complete": the Inbox event this module declares (protocol 2.31.0, `events` in the
  * manifest), and the one rule for when a subagent's finish is one.
@@ -13,54 +9,42 @@ import { firstPrompt, recordFile } from './program.ts'
  *    URL, so only that conversation's agent (or a subagent of it, which calls the same doors) can
  *    tag its item. The tag waits for the turn to end (`Stop`), and the finished item then names the
  *    event and carries the label.
- *  - **A subagent** that finishes (`SubagentStop`, through `tell.sh`) is one when it called the
- *    tool while it ran (the tag is newer than its `SubagentStart`), or when it is research
+ *  - **A subagent** that finishes (`SubagentStop`, from the session's plugin) is one when it called
+ *    the tool while it ran (the tag is newer than its `SubagentStart`), or when it is research
  *    (`isResearch`). It is then an item of its own. Any other subagent finishing says nothing.
  *
- * ## What Codex says of a subagent
+ * ## What OpenCode says of a subagent
  *
- * Codex (codex-rs `SubagentStopCommandInput`) hands a subagent's hooks its `agent_id` — the child
- * thread's id — and `agent_type`, its role (`default`, `explorer`, `worker`, or one the person
- * configured). No description. So a subagent is research when its role is `explorer` ("specific
- * codebase questions"), or when the first line of the task it was given reads as research; that
- * line is its label. It is read from the subagent's own record the way a conversation's first
- * prompt is (`firstPrompt`), and nothing else of the record is.
+ * OpenCode's task tool runs a subagent in a child session (`session.created` with a `parentID`),
+ * titled `<description> (@<agent> subagent)` (tool/task.ts, v1.19.5). The plugin passes the child's
+ * id, the agent's name and the description; nothing else of the child is read. A subagent is
+ * research when its agent is `explore` (OpenCode's built-in read-only agent for questions about the
+ * code), or when the first line of its description reads as research; that line is its label.
  */
 
 export { EVENTS, EVENT_IDS, RESEARCH_EVENT } from './events.ts'
 
 const RESEARCH_WORDS =
   /\b(research\w*|investigat\w*|find(?:ing)? out|look(?:ing)? into|compar\w*|audit\w*|survey\w*|explor\w*|analy[sz]\w*|stud(?:y|ies|ying)|review\w*|evaluat\w*|assess\w*|read(?:ing)? up)\b/i
-/** Codex's own read-only role: its subagents answer questions about the code. */
-const RESEARCH_ROLES = new Set(['explorer'])
+/** OpenCode's own read-only agent: its subagents answer questions about the code. */
+const RESEARCH_ROLES = new Set(['explore'])
 
-/** Whether a finished subagent was research: an `explorer`, or a task whose first line has a research word. */
+/** Whether a finished subagent was research: an `explore` agent, or a task whose first line has a research word. */
 export function isResearch(agent: { agentType?: string | null; task?: string | null }): boolean {
   if (agent.agentType && RESEARCH_ROLES.has(agent.agentType)) return true
   return RESEARCH_WORDS.test((agent.task ?? '').trim())
 }
 
-/** An agent id as Codex gives one (a thread id); nothing else is used to find a record. */
-export const AGENT_ID = /^[0-9a-f-]{36}$/
-/** An agent type (a role) as a hook gives one. */
+/** A subagent's id as OpenCode gives one: its child session's id. Nothing else is used to find it. */
+export const AGENT_ID = /^ses_[0-9A-Za-z]{10,64}$/
+/** An agent's name as OpenCode spells one. */
 export const AGENT_TYPE = /^[A-Za-z0-9:._-]{1,64}$/
 
-const HEAD_BYTES = 512 * 1024
-
-/** The first line of the task a subagent was given, from the head of its own record; null when there is none. */
-export async function subagentTask(agent: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  if (!AGENT_ID.test(agent)) return null
-  const file = await recordFile('', agent, env)
-  if (!file) return null
-  const handle = await openFile(file, 'r').catch(() => null)
-  if (!handle) return null
-  try {
-    const buffer = Buffer.alloc(HEAD_BYTES)
-    const { bytesRead } = await handle.read(buffer, 0, HEAD_BYTES, 0)
-    return firstPrompt(buffer.subarray(0, bytesRead).toString('utf8')) || null
-  } finally {
-    await handle.close()
-  }
+/** The first line of a subagent's task, as the plugin said it: one line, no control characters, short; null for none. */
+export function taskLine(said: string | null | undefined): string | null {
+  const first = (said ?? '').split('\n').map((one) => one.replace(/[\u0000-\u001f\u007f]/g, ' ').trim()).find(Boolean) ?? ''
+  if (!first) return null
+  return first.length > 120 ? `${first.slice(0, 119).trimEnd()}…` : first
 }
 
 /** What the session's agent said it finished, waiting for the turn or a subagent to end. */

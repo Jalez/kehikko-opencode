@@ -81,7 +81,7 @@ function server(start: Record<string, Row[]> = {}) {
       order.push(`read ${key}`)
       return {
         ok: true,
-        program: { name: 'Codex', found: state.found, foundAt: state.found, looked: ['/usr/bin', '/Users/someone/.local/bin'], where: 'PATH, ~/.local/bin', lacks: state.lacks, install: { line: 'curl -fsSL https://claude.ai/install.sh | bash', lands: '~/.local/bin/claude' }, asked: 'yes' },
+        program: { name: 'OpenCode', found: state.found, foundAt: state.found, looked: ['/usr/bin', '/Users/someone/.local/bin'], where: 'PATH, ~/.local/bin', lacks: state.lacks, install: { line: 'curl -fsSL https://claude.ai/install.sh | bash', lands: '~/.local/bin/claude' }, asked: 'yes' },
         sessions: held[key] ?? [],
         others: state.others,
         running: state.running,
@@ -486,7 +486,7 @@ describe('when the program is not installed', () => {
     s.state.found = null
     const { container } = render(<Sessions theme="dark" at={at()} api={s.api} />)
     await flush()
-    expect(container.textContent).toContain('Codex is not installed — looked in PATH, ~/.local/bin.')
+    expect(container.textContent).toContain('OpenCode is not installed — looked in PATH, ~/.local/bin.')
     expect([...container.querySelectorAll('button')].map((one) => one.textContent)).toEqual(['Install'])
     /* Nothing runs until the press. */
     expect(mounted.length).toBe(0)
@@ -535,7 +535,7 @@ describe('when the program is not installed', () => {
     s.state.lacks = '--session-id'
     const { container } = render(<Sessions theme="dark" at={at()} api={s.api} />)
     await flush()
-    expect(container.textContent).toContain('Codex at /bin/claude is too old for this: it has no --session-id.')
+    expect(container.textContent).toContain('OpenCode at /bin/claude is too old for this: it has no --session-id.')
     expect([...container.querySelectorAll('button')].map((one) => one.textContent)).toEqual(['Update'])
     expect(mounted.length).toBe(0)
   })
@@ -545,7 +545,7 @@ describe('when the program is not installed', () => {
     const { container } = render(<Sessions theme="dark" at={at()} api={s.api} />)
     await flush()
     s.state.found = null
-    act(() => view('whole@3:new').tell({ at: 'closed', code: 4404, why: 'Codex is not installed.' }))
+    act(() => view('whole@3:new').tell({ at: 'closed', code: 4404, why: 'OpenCode is not installed.' }))
     await flush()
     expect(container.textContent).toContain('is not installed')
   })
@@ -780,7 +780,7 @@ describe('a session that is already running somewhere else', () => {
     expect(mounted.length).toBe(0)
     const question = container.querySelector('[data-elsewhere-question]') as HTMLElement
     expect(question.getAttribute('data-elsewhere-question')).toBe('interactive')
-    expect(question.textContent).toContain('“tighten the methods” is already open in another Codex process on this computer: a Codex process in a terminal, an editor or the Codex app, process 82070, in /Users/someone/Projects/thesis, started 17 min ago.')
+    expect(question.textContent).toContain('“tighten the methods” is already open in another OpenCode process on this computer: an OpenCode process in a terminal, an editor or the OpenCode app, process 82070, in /Users/someone/Projects/thesis, started 17 min ago.')
     expect(question.textContent).toContain('Nothing has been started here')
     const rows = [...question.querySelectorAll('[data-row]')]
     expect(rows.map((one) => one.getAttribute('data-row'))).toEqual(['leave', 'copy'])
@@ -823,7 +823,7 @@ describe('a session that is already running somewhere else', () => {
     await flush()
     expect(container.querySelector('[data-elsewhere-question]')).toBeNull()
     const left = container.querySelector('[data-left-alone]') as HTMLElement
-    expect(left.textContent).toContain('“tighten the methods” stays open in the other Codex process. Nothing was started here.')
+    expect(left.textContent).toContain('“tighten the methods” stays open in the other OpenCode process. Nothing was started here.')
     expect(left.textContent).toContain('Open it here anyway')
     expect(mounted.length).toBe(0)
     expect(all(container)).toEqual([])
@@ -850,7 +850,7 @@ describe('a session that is already running somewhere else', () => {
     await flush()
     act(() => view('whole@3:a').tell({ at: 'closed', code: 4409, why: 'open in another process; nothing was started' }))
     await flush()
-    expect(container.querySelector('[data-elsewhere-question]')?.textContent).toContain('This conversation is already open in another Codex process on this computer.')
+    expect(container.querySelector('[data-elsewhere-question]')?.textContent).toContain('This conversation is already open in another OpenCode process on this computer.')
     expect(mounted.length).toBe(0)
   })
 
@@ -911,7 +911,7 @@ describe('a project folder renamed while its session runs', () => {
 
     /* The server followed the run there (reading the list does that) and said the program is still in the old folder. */
     act(() => view('whole@3:a').say({ session: 'a', moved: RENAMED, cwd: P }))
-    expect(line(container)?.textContent).toContain(`This folder was renamed to ${RENAMED}. Codex still uses the old path; restart in the new folder when it's idle.`)
+    expect(line(container)?.textContent).toContain(`This folder was renamed to ${RENAMED}. OpenCode still uses the old path; restart in the new folder when it's idle.`)
 
     /* Working: the restart waits. */
     act(() => view('whole@3:a').say({ session: 'a', state: 'working', since: 1 }))
@@ -960,13 +960,13 @@ describe('a project folder renamed while its session runs', () => {
 })
 
 /* ------------------------------------------------------------------ *
- * Connecting conversations: the bar, the View menu, $kehikot-here
+ * Connecting conversations: the bar, the View menu, /kehikot-here
  * ------------------------------------------------------------------ */
 
 describe('the bar, when no conversation is connected to this kehikko', () => {
-  const WORDS = 'No conversation is connected to this kehikko. Type $kehikot-here in the Codex conversation you want here.'
+  const WORDS = 'No conversation is connected to this kehikko. Type /kehikot-here in the OpenCode conversation you want here.'
 
-  test('is drawn above Codex — a new conversation, started all the same — and copies the command', async () => {
+  test('is drawn above OpenCode — a new conversation, started all the same — and copies the command', async () => {
     const s = told()
     s.state.others = [row('elsewhere', { label: 'a conversation of another kehikko' })]
     const copied: string[] = []
@@ -976,17 +976,17 @@ describe('the bar, when no conversation is connected to this kehikko', () => {
       const { container } = render(<Sessions theme="dark" at={at()} api={s.api} hosted={s.hosted} />)
       await flush()
       expect(bar(container)?.textContent).toContain(WORDS)
-      /* Codex's own UI, not a list: nothing from the rest of the project is offered. */
+      /* OpenCode's own UI, not a list: nothing from the rest of the project is offered. */
       expect(shown(container)).toEqual(['whole@3:new'])
       expect(container.textContent).not.toContain('a conversation of another kehikko')
       /* Above the terminal, not an Inbox item. */
       expect((container.firstElementChild as HTMLElement).firstElementChild).toBe(bar(container))
       expect(s.activities.flat()).toEqual([])
       const button = bar(container)!.querySelector('[data-copy-command]') as HTMLElement
-      expect(button.textContent).toBe('Copy $kehikot-here')
+      expect(button.textContent).toBe('Copy /kehikot-here')
       fireEvent.click(button)
       await flush()
-      expect(copied).toEqual(['$kehikot-here'])
+      expect(copied).toEqual(['/kehikot-here'])
       expect(button.textContent).toBe('Copied')
       /* Nothing to choose from: the header declares nothing. */
       expect(lastHeader(s)).toEqual([])
@@ -1021,7 +1021,7 @@ describe('the bar, when no conversation is connected to this kehikko', () => {
     const { container } = render(<Sessions theme="dark" at={at()} api={s.api} hosted={s.hosted} />)
     await flush()
     expect(bar(container)).not.toBeNull()
-    /* The server records it at its place when Codex has a record of it, and says so. */
+    /* The server records it at its place when OpenCode has a record of it, and says so. */
     s.held[KEY()] = [row('x', { label: 'what was first asked', running: true })]
     s.state.own = 'x'
     act(() => view('whole@3:new').say({ session: 'x', exists: true, typed: true }))
@@ -1034,7 +1034,7 @@ describe('the bar, when no conversation is connected to this kehikko', () => {
     expect(lastHeader(s)[0]).toMatchObject({ kind: 'switch', id: 'conversation', value: 'x', options: [{ id: 'x', label: 'what was first asked · own' }] })
   })
 
-  test('$kehikot-here connecting another conversation: the bar goes and the container switches to it', async () => {
+  test('/kehikot-here connecting another conversation: the bar goes and the container switches to it', async () => {
     const s = told()
     const { container } = render(<Sessions theme="dark" at={at()} api={s.api} hosted={s.hosted} />)
     await flush()
@@ -1049,7 +1049,7 @@ describe('the bar, when no conversation is connected to this kehikko', () => {
     expect(shown(container)).toEqual(['whole@3:t'])
   })
 
-  test('$kehikot-here to another place, or another kehikko, moves nothing here', async () => {
+  test('/kehikot-here to another place, or another kehikko, moves nothing here', async () => {
     const s = told({ [KEY()]: [row('a', { label: 'mine' })] })
     const { container } = render(<Sessions theme="dark" at={at()} api={s.api} hosted={s.hosted} />)
     await flush()
@@ -1059,7 +1059,7 @@ describe('the bar, when no conversation is connected to this kehikko', () => {
     expect(shown(container)).toEqual(['whole@3:a'])
   })
 
-  test('$kehikot-here while another of this kehikko’s conversations is on screen: that one is put on screen', async () => {
+  test('/kehikot-here while another of this kehikko’s conversations is on screen: that one is put on screen', async () => {
     const s = told({ [KEY()]: [row('a', { label: 'mine' })] })
     s.state.own = 'a'
     const { container } = render(<Sessions theme="dark" at={at()} api={s.api} hosted={s.hosted} />)
@@ -1185,7 +1185,7 @@ describe('the View menu: this kehikko’s conversations', () => {
     expect(shown(container)).toEqual(['whole@3:a'])
     expect(lastHeader(s)[0]!.options!.map((one) => one.id)).toEqual(['a'])
 
-    /* The last one: Codex all the same, a new conversation, and the bar. */
+    /* The last one: OpenCode all the same, a new conversation, and the bar. */
     pressOn(s, 'disconnect')
     await flush()
     expect(s.asked).toContain('detach a')
@@ -1309,7 +1309,7 @@ describe('asked to show a conversation', () => {
 
 describe('an Inbox item the person opened (kehikot.opened, protocol 2.35.0)', () => {
   test('names the conversation of each kind of item this module reports', () => {
-    const id = '0f3a2b1c-0000-4000-8000-000000000000'
+    const id = 'ses_0f3a2b1c000040008000000000000000'
     expect(itemSession(id)).toBe(id)
     expect(itemSession(`cut-off:${id}`)).toBe(id)
     expect(itemSession(`resumed:${id}`)).toBe(id)

@@ -36,7 +36,7 @@ import { TerminalView, type Said, type Standing } from './view/terminal-view.tsx
 import { Button } from '@/components/ui/button'
 
 /** What the shared sentences call this module. */
-const NAME = 'Codex'
+const NAME = 'OpenCode'
 
 /** The server's reasons for closing a socket that the page acts on (`CLOSED` in live.ts). */
 const INSTALLED = 4010
@@ -63,7 +63,7 @@ const knock = () => void probeServer()
  * a renamed folder is the same project — and keyed by place, so a choice made
  * in one place cannot land in another.
  */
-const remembered = held<string>('kehikot.codex.showing', (stored) => (typeof stored === 'string' && stored ? stored : null))
+const remembered = held<string>('kehikot.opencode.showing', (stored) => (typeof stored === 'string' && stored ? stored : null))
 
 /** A press on one of this module's header items, as the page takes it. */
 type Press = (press: { item: string; value?: string | boolean }) => PressAnswer
@@ -171,20 +171,20 @@ export function App() {
  * (`QUIET_REST` in live.ts); its view here is told so, is let go without a
  * word, and coming back to the place resumes the same session.
  *
- * ## Codex's own UI, always
+ * ## OpenCode's own UI, always
  *
  * There is no list of the project's conversations to pick from: the place
  * opens one of its connected conversations, or a new one when it has none
  * (`decide` in view/places.ts). Choosing among the connected ones is the
- * header's View menu; starting another is Codex's own `/clear`, and
+ * header's View menu; starting another is OpenCode's own `/clear`, and
  * going to an older one its own `/resume`, both in the terminal.
  *
  * One question is still put before anything is started, in the terminal's
- * own space: a session another Codex process has open, and that cannot
+ * own space: a session another OpenCode process has open, and that cannot
  * be attached to, is not resumed. The server says who has it and closes the
  * socket (`ELSEWHERE`), and the person chooses between leaving it and opening
  * a copy, with what a copy means beside the word. While that stands for a
- * place, nothing is opened there by itself (`blocked`). A session Codex
+ * place, nothing is opened there by itself (`blocked`). A session OpenCode
  * Code runs in the background needs no question: the server attaches to it.
  *
  * ## What is drawn besides the terminal
@@ -216,7 +216,7 @@ export function App() {
  *
  * ## When a conversation is connected from inside it
  *
- * `$kehikot-here`, typed in a conversation, writes the record and tells every
+ * `/kehikot-here`, typed in a conversation, writes the record and tells every
  * page following the project which place it went to (the feed's `sessions`
  * event). The page on that place reads its list again — so the bar goes —
  * and puts that conversation on screen (`switchTo`).
@@ -258,7 +258,7 @@ export function Sessions({
   const [states, setStates] = useState<Record<string, { state: State | null; since: number }>>({})
   const [listing, setListing] = useState<{ id: string; value: Listing } | null>(null)
   const [refusal, setRefusal] = useState<string | null>(null)
-  /** A conversation `$kehikot-here` just connected to a place: put on screen there once the list has it. */
+  /** A conversation `/kehikot-here` just connected to a place: put on screen there once the list has it. */
   const [switchTo, setSwitchTo] = useState<{ place: string; session: string } | null>(null)
   /**
    * The session this place would open is open in another process, and nothing
@@ -446,7 +446,7 @@ export function Sessions({
   /*
    * A conversation connected to this place while something else is on screen:
    *
-   *  - the one `$kehikot-here` just connected here (`switchTo`), once the list has it;
+   *  - the one `/kehikot-here` just connected here (`switchTo`), once the list has it;
    *  - or, for a new conversation nobody has spoken to yet, whichever the place now opens.
    *
    * Nothing else is switched away from: a conversation the person is in stays on screen.
@@ -468,7 +468,7 @@ export function Sessions({
   /*
    * Another module asked for one of this place's conversations to be shown (`context.show`): Test
    * runs going to the session that queued a run. Once this place's list is read, a conversation
-   * connected here is switched to as `$kehikot-here` does (`switchTo`); one that is not this place's
+   * connected here is switched to as `/kehikot-here` does (`switchTo`); one that is not this place's
    * is left alone — it may be Claude's, or another place's — and the ask is spent either way.
    */
   const showActed = useRef<{ subject: string; id: string; at?: string } | null>(null)
@@ -574,7 +574,7 @@ export function Sessions({
       /* The server writes the whole list and says it again on every change and on arrival; this only
          passes it on. The client drops an identical one and sends nothing to a host without the method. */
       activity: (items) => told.current.hosted?.activity?.(items),
-      /* The project's record changed: the list is read again. When it was `$kehikot-here` connecting a
+      /* The project's record changed: the list is read again. When it was `/kehikot-here` connecting a
          conversation to the place this page is on, that conversation is put on screen. */
       sessions: (event) => {
         setAgain((n) => n + 1)
@@ -599,8 +599,8 @@ export function Sessions({
 
   /*
    * What this page has on screen, said to the server: its place, and whether the open kehikko has
-   * a Codex container (a host that says nothing about containers is taken at its framing). What
-   * `$kehikot-here`, typed in a conversation, assigns to. Said when it changes, and again each time
+   * an OpenCode container (a host that says nothing about containers is taken at its framing). What
+   * `/kehikot-here`, typed in a conversation, assigns to. Said when it changes, and again each time
    * the feed (re)opens, since the server keeps it only while this page's feed is open. Never on a clock.
    */
   const onScreen = containers === '' || containers.split(',').includes(ID)
@@ -626,7 +626,7 @@ export function Sessions({
   const terminal = Boolean(at && view && !installing)
   const label = view ? brief((view.session && (labels[view.session] || here?.sessions.find((one) => one.id === view.session)?.label)) || '') : ''
   /* What the session on screen is besides this module's own: a view of a background one, a copy, or unchecked. */
-  const how = view ? standingWords(hows[view.n], here?.program.name ?? 'Codex', Date.now()) : null
+  const how = view ? standingWords(hows[view.n], here?.program.name ?? 'OpenCode', Date.now()) : null
   const doing = (view?.session && Object.hasOwn(states, view.session) ? states[view.session] : undefined) ?? null
   /* The session on screen runs in a folder its project has left: the line saying so, until dismissed. */
   const movedTo = view && at && moves[view.n] && dismissed[view.n] !== moves[view.n] ? at.projectPath : null
@@ -784,7 +784,7 @@ export function Sessions({
         <Cover state="refused" name={NAME} detail={refusal} onRetry={() => setAgain((n) => n + 1)} />
       )}
 
-      {/* No conversation is connected to this kehikko: one slim line above Codex, saying so and
+      {/* No conversation is connected to this kehikko: one slim line above OpenCode, saying so and
           what to type where. Gone once the record lists one. */}
       {!cover && usable && farewell && farewell.place === id && (
         <div className="flex items-center gap-2 border-b px-2 py-1 text-[11px]" role="status" data-disconnected>
@@ -919,7 +919,7 @@ export function Sessions({
         <ContextLine
           key={`${view.n}:${view.session}`}
           context={Object.hasOwn(contexts, view.session) ? (contexts[view.session] ?? null) : (here?.sessions.find((one) => one.id === view.session)?.context ?? null)}
-          ready={Object.hasOwn(readies, view.n) ? (readies[view.n] ?? null) : 'It is not known yet whether Codex is waiting at its prompt.'}
+          ready={Object.hasOwn(readies, view.n) ? (readies[view.n] ?? null) : 'It is not known yet whether OpenCode is waiting at its prompt.'}
           answer={commanded[view.n] ?? null}
           onCommand={(which) => commands.current?.(which) ?? false}
         />
@@ -930,7 +930,7 @@ export function Sessions({
       {terminal && view && movedTo && !ended && !cover && (
         <div className="flex items-center justify-between gap-2 border-t px-2 py-1" role="status" data-moved={movedTo}>
           <span className="text-muted-foreground min-w-0 text-[11px]">
-            This folder was renamed to {movedTo}. Codex still uses the old path; restart in the new folder when it's idle.
+            This folder was renamed to {movedTo}. OpenCode still uses the old path; restart in the new folder when it's idle.
             {notMoved ? ` ${notMoved}` : ''}
           </span>
           <span className="flex shrink-0 gap-1">

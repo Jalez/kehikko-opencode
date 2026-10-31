@@ -14,7 +14,7 @@ import { assign, attach, born, byToken, detach, follow, homeOf, ignore, ownOf, r
 
 const made: string[] = []
 const dir = () => {
-  const one = realpathSync(mkdtempSync(join(tmpdir(), 'kehikko-codex-own-')))
+  const one = realpathSync(mkdtempSync(join(tmpdir(), 'kehikko-opencode-own-')))
   made.push(one)
   return one
 }
@@ -22,9 +22,9 @@ afterAll(() => {
   for (const one of made) rmSync(one, { recursive: true, force: true })
 })
 
-const A = '11111111-1111-4111-8111-111111111111'
-const B = '22222222-2222-4222-8222-222222222222'
-const C = '33333333-3333-4333-8333-333333333333'
+const A = 'ses_11111111111141118111111111111111'
+const B = 'ses_22222222222242228222222222222222'
+const C = 'ses_33333333333343338333333333333333'
 const METHODS = { epic: 'thesis', parts: ['methods'], kehikko: { key: 'k1a2b3c4' }, kehikkoName: 'writing' }
 const RESULTS = { epic: 'thesis', parts: ['results'], kehikko: { key: 'k1a2b3c4' }, kehikkoName: 'writing' }
 const TOKEN = 'abcdefghijklmnopqrstuvwxyz012345'
@@ -128,7 +128,7 @@ describe('not a Kehikot conversation', () => {
     sighted(p, A, 'agents')
     expect(unassigned(read(p))).toEqual([B])
     /* What is on disk is what a restarted server reads. */
-    const onDisk = JSON.parse(readFileSync(join(p, '.kehikot', 'codex', 'places.json'), 'utf8'))
+    const onDisk = JSON.parse(readFileSync(join(p, '.kehikot', 'opencode', 'places.json'), 'utf8'))
     expect(onDisk.sessions[A].ignored).toEqual({ at: new Date(2_000).toISOString() })
   })
 

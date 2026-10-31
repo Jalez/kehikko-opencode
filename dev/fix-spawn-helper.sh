@@ -36,6 +36,6 @@ for helper in \
 do
   if [ -f "$helper" ] && [ ! -x "$helper" ]; then
     chmod +x "$helper"
-    echo "codex: restored the executable bit on $helper" >&2
+    echo "opencode: restored the executable bit on $helper" >&2
   fi
 done

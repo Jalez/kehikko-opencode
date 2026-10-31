@@ -14,9 +14,9 @@ import { MARKS, ago } from './places.ts'
  * epic, the picked parts and the kehikko) when the record lists it there
  * (`places.json`). Exactly two things put it there, and neither is a guess:
  *
- *  - `$kehikot-here`, typed by the person in that conversation;
+ *  - `/kehikot-here`, typed by the person in that conversation;
  *  - it is the conversation this container itself started (or moved on to,
- *    by `/resume` or `/clear` in it) — written once Codex has a record
+ *    by `/resume` or `/clear` in it) — written once OpenCode has a record
  *    of it, which is when the person first says something in it.
  *
  * Nothing else connects one: no conversation of the project is offered or
@@ -25,7 +25,7 @@ import { MARKS, ago } from './places.ts'
  *
  * ## The bar
  *
- * With none connected the container still shows Codex — a fresh
+ * With none connected the container still shows OpenCode — a fresh
  * conversation in the project's folder — and one slim line above it says
  * that nothing is connected and how to connect one (`NONE_CONNECTED`), with
  * the command to copy. It is not an Inbox item: it is about this container,
@@ -74,10 +74,10 @@ export function resumeToggle(checked: boolean | null): HeaderItemInput[] {
 }
 
 /** What the module types into a conversation to connect it. */
-export const HERE_COMMAND = '$kehikot-here'
+export const HERE_COMMAND = '/kehikot-here'
 
 /** The bar, word for word. */
-export const NONE_CONNECTED = `No conversation is connected to this kehikko. Type ${HERE_COMMAND} in the Codex conversation you want here.`
+export const NONE_CONNECTED = `No conversation is connected to this kehikko. Type ${HERE_COMMAND} in the OpenCode conversation you want here.`
 
 /** The protocol's limits (`HEADER_LABEL`, `HEADER_OPTIONS`). */
 const LABEL = 48
@@ -99,7 +99,7 @@ export function disconnectedLine(title: string): string {
 
 const cut = (text: string, most: number) => (text.length > most ? `${text.slice(0, Math.max(1, most - 1)).trimEnd()}…` : text)
 
-/** How full a conversation's context is, in a menu line: `41%`, or `82% soon` near where Codex compacts by itself. */
+/** How full a conversation's context is, in a menu line: `41%`, or `82% soon` near where OpenCode compacts by itself. */
 export function contextShort(context: Row['context']): string {
   if (!context || context.percent === null) return ''
   return `${context.percent}%${context.soon ? ' soon' : ''}`

@@ -34,8 +34,8 @@ export interface Api {
   /** Which doors a running session would be given now that it was not; null when not known. */
   doors?(session: string): Promise<{ added: string[]; removed: string[] } | null>
   /**
-   * Say what this page has on screen — its place, and whether the open kehikko has a Codex
-   * container — or `null` for nothing. What `$kehikot-here` typed in a conversation assigns to.
+   * Say what this page has on screen — its place, and whether the open kehikko has an OpenCode
+   * container — or `null` for nothing. What `/kehikot-here` typed in a conversation assigns to.
    */
   showing?(page: string, at: { projectPath: string; key: string; kehikkoName: string; partNames: string[]; onScreen: boolean } | null): Promise<void>
   /** Take a session off a place ("Disconnect from this kehikko"). The session itself is kept. */

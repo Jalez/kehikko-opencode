@@ -15,8 +15,8 @@ import { PLACE_TOKEN } from './record.ts'
  * When this module starts or resumes a conversation it asks the host for the
  * doors the session should have — the host's own and those of the modules on
  * the place's kehikko — with the conversation's token on every URL
- * (`?kehikot-place=<token>`), and hands them to Codex for that one
- * process with `-c mcp_servers.<name>=…` (`doorArgs`). Every door the session calls then knows
+ * (`?kehikot-place=<token>`), and hands them to OpenCode for that one
+ * process in the `mcp` table of the session's own configuration folder (`mcpOf`, skills.ts). Every door the session calls then knows
  * which conversation is calling, and answers from this module's record of it
  * (`/api/kehikot/place`), whatever the person has switched the screen to.
  *
@@ -79,9 +79,8 @@ export interface HostPlace {
   modules: ModuleOn[] | null
   absent: AbsentModule[] | null
   /**
-   * The skills the host keeps for every conversation (protocol 2.23.0), for this module to keep
-   * where Codex reads skills. Null from a host too old to say, or a list that did not parse: then
-   * nothing kept for every conversation is changed.
+   * The skills the host keeps for every conversation (protocol 2.23.0), for this module to give
+   * its sessions (their own `skills/`). Null from a host too old to say, or a list that did not parse.
    */
   everywhere: EverywhereSkill[] | null
 }
@@ -162,41 +161,45 @@ function isDoor(raw: unknown): raw is SessionDoor {
   }
 }
 
-/** A door's name as Codex takes one for an MCP server: letters, digits, `_` and `-` (a dot would split the `-c` path). */
+/** A door's name as an MCP server's name in OpenCode: letters, digits, `_` and `-` (its tools are called `<name>_<tool>`). */
 export function serverName(name: string): string {
   return name.replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 64) || 'kehikot'
 }
 
+/** One door as OpenCode's configuration says a remote MCP server (opencode.ai/docs/mcp-servers). */
+export interface McpEntry {
+  type: 'remote'
+  url: string
+  enabled: true
+  /** A Kehikot door is on this computer and asks for no sign-in: OpenCode is told not to look for OAuth. */
+  oauth: false
+}
+
 /**
- * The `-c` arguments that give one Codex process these doors: `mcp_servers.<name>={ url = … }`,
- * Codex's own MCP table in the session-flags layer (measured on 0.164.0: the server connects, and
- * `/mcp` lists it beside the person's own). A door under a name the person's `config.toml` also
- * uses replaces its address for this process; their other servers are kept.
+ * The `mcp` table that gives one OpenCode process these doors, for the session's own
+ * `opencode.json` (skills.ts): `{ <name>: { type: "remote", url, enabled: true, oauth: false } }`.
+ * OpenCode merges it over the person's configuration, so a door under a name the person's config
+ * also uses replaces its address for this process; their other servers are kept.
  *
- * ## The token is on the command line
+ * ## The token is in a file of the session's own
  *
- * Codex takes MCP servers for one process only as `-c` values (or as a file in `~/.codex`, which
- * this module never writes), so the door's address — and the place token in it — is in this
- * process's arguments, which other processes of this user can list. The token is a pointer, not a
- * credential (protocol 2.4.0, `PLACE_PARAM`): it names one conversation's record and grants
- * nothing a call could not do by naming the place. The Claude module keeps it in a 0600 file
- * because Claude Code can read one; Codex cannot.
+ * The door's address carries the place token (protocol 2.4.0, `PLACE_PARAM`): a pointer, not a
+ * credential — it names one conversation's record and grants nothing a call could not do by naming
+ * the place. It is in a 0600 file in the session's 0700 folder, never on a command line.
  */
-export function doorArgs(doors: readonly SessionDoor[]): string[] {
-  const seen = new Set<string>()
-  const args: string[] = []
+export function mcpOf(doors: readonly SessionDoor[]): Record<string, McpEntry> {
+  const out: Record<string, McpEntry> = {}
   for (const door of doors) {
     const name = serverName(door.name)
-    if (seen.has(name)) continue
-    seen.add(name)
-    args.push('-c', `mcp_servers.${name}={url=${JSON.stringify(door.url)}}`)
+    if (Object.hasOwn(out, name)) continue
+    out[name] = { type: 'remote', url: door.url, enabled: true, oauth: false }
   }
-  return args
+  return out
 }
 
 /** Where a session's folders are kept: this user's temporary folder, readable by this user alone. */
 export function configDirOf(base = tmpdir()): string {
-  return join(base, `kehikot-codex-${process.getuid?.() ?? 'user'}`)
+  return join(base, `kehikot-opencode-${process.getuid?.() ?? 'user'}`)
 }
 
 export function removeConfig(file: string | null): void {

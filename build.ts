@@ -12,5 +12,5 @@ import { buildModule } from 'kehikot-module-protocol/build'
  * from a checkout with no changes to tracked files; an edited checkout's build
  * is not stamped, and `run.sh` keeps Vite for it.
  */
-const built = await buildModule({ dir: import.meta.dirname, page: { title: 'Codex' } })
+const built = await buildModule({ dir: import.meta.dirname, page: { title: 'OpenCode' } })
 if (!built.stamped) process.exitCode = 2

@@ -14,7 +14,7 @@ export const PLACE_TOKEN = /^[A-Za-z0-9_-]{22,64}$/
 
 /**
  * Which session belongs to which place, kept inside the project it is about:
- * `<project>/.kehikot/codex/places.json`.
+ * `<project>/.kehikot/opencode/places.json`.
  *
  *     {
  *       "version": 1,
@@ -43,7 +43,7 @@ export const PLACE_TOKEN = /^[A-Za-z0-9_-]{22,64}$/
  * - **The kehikko's `id`** beside a `key` is the row number the host last
  *   called it by: a note for a person lining this file up with a host's
  *   database, nothing more. It is never compared and never looked up.
- * - **A session's `label` and `lastActive`** are what Codex's own record
+ * - **A session's `label` and `lastActive`** are what OpenCode's own record
  *   said the last time this module looked, so the list can be drawn from this
  *   file alone — for a session whose transcript has since been cleaned away,
  *   and for an agent asking through the MCP door.
@@ -63,7 +63,7 @@ export const PLACE_TOKEN = /^[A-Za-z0-9_-]{22,64}$/
  *
  * Its key can no longer be reached, because the host will never name that
  * combination again. Nothing is deleted on that account: the entry stays in
- * the file, readable, and its sessions stay in Codex's own records for
+ * the file, readable, and its sessions stay in OpenCode's own records for
  * the folder — which is where "attach an existing session" lists them from,
  * for every other place in the project. A rename changes nothing at all, since
  * a rename does not change a key.
@@ -88,8 +88,8 @@ export const PLACE_TOKEN = /^[A-Za-z0-9_-]{22,64}$/
  * ## What travels with the project, and what does not
  *
  * This file is in the project, and the sessions it names are not: a session
- * is a transcript in Codex's own folder on the computer where it ran.
- * On another computer — or on this one, after Codex has cleaned an old
+ * is a transcript in OpenCode's own folder on the computer where it ran.
+ * On another computer — or on this one, after OpenCode has cleaned an old
  * transcript away — the file names a session there is no record of. Such an
  * id is never removed here on that account (the other computer still has
  * it), and never started: `doors.ts` marks it `missing`, the list shows it
@@ -119,7 +119,7 @@ export const PLACE_TOKEN = /^[A-Za-z0-9_-]{22,64}$/
  * followed.
  */
 export const FILE = 'places'
-export const WHERE = `<project>/${KEHIKOT_DIR}/codex/${FILE}.json`
+export const WHERE = `<project>/${KEHIKOT_DIR}/opencode/${FILE}.json`
 
 export interface PlaceEntry {
   epic: string | null
@@ -162,12 +162,12 @@ export interface SessionEntry {
   /**
    * The token its sessions carry on every Kehikot door (protocol 2.4.0,
    * `PLACE_PARAM`): what a door hands back to find this record. Random, kept
-   * with the conversation, carried on when Codex continues it under a
+   * with the conversation, carried on when OpenCode continues it under a
    * new id.
    */
   token?: string
   /**
-   * How this module learnt of a conversation it did not start: Codex's
+   * How this module learnt of a conversation it did not start: OpenCode's
    * SessionStart hook (`hook`), or the program's list of what is running (`agents`). With no
    * `home`, it is listed as not yet assigned.
    */
@@ -186,7 +186,7 @@ export interface SessionEntry {
    */
   detached?: string
   /**
-   * Started or woken in the background by this module (the Claude module's; never for Codex): its saved options — the
+   * Started or woken in the background by this module (the Claude module's; never for OpenCode): its saved options — the
    * name, the plugin folder and the doors file — are this module's, so it is woken with none
    * given (a flag would carry it on as a copy). See "The background" in program.ts.
    */
@@ -326,7 +326,7 @@ function beside(kehikko: Place['kehikko'], name: string, seen?: number): PlaceEn
  *   kehikko of the same name — and entries under ids are left alone rather
  *   than guessed at.
  * - **Everything else stays exactly as it is.** An entry whose name matches
- *   nothing is not touched and not removed; its sessions are in Codex's
+ *   nothing is not touched and not removed; its sessions are in OpenCode's
  *   records for the folder and can be attached from any place. When nothing
  *   matches at all, the file is not written.
  *
@@ -381,7 +381,7 @@ function movable(places: Places, name: string): string[] {
 }
 
 /**
- * A conversation that Codex carried on under a new id: wherever `from`
+ * A conversation that OpenCode carried on under a new id: wherever `from`
  * is listed, `to` takes its place — in the same position, and as the place's
  * current one where `from` was. `from` was a step behind the conversation and
  * opening it again would start another copy of an old point in it, so it is
@@ -522,7 +522,7 @@ export function assign(
   })
 }
 
-/** A conversation this module did not start, reported by Codex: listed as not yet assigned until somebody says. */
+/** A conversation this module did not start, reported by OpenCode: listed as not yet assigned until somebody says. */
 export function sighted(projectPath: string | null | undefined, id: string, via: 'hook' | 'agents', now = Date.now(), label = ''): Result<Places> {
   const read = readPlaces(projectPath)
   if (!read.ok) return read
@@ -693,10 +693,10 @@ function change(projectPath: string | null | undefined, edit: (places: Places) =
  * What the `.gitignore` beside the record says, when this module writes it.
  * See "What travels with the project" at the top.
  */
-export const IGNORE = `# Which Codex session belongs to which place in this project.
+export const IGNORE = `# Which OpenCode session belongs to which place in this project.
 #
 # Not shared by default. The sessions themselves are on the computer where
-# they ran (Codex's own folder, ~/.codex), so the list means little
+# they ran (OpenCode's own database), so the list means little
 # anywhere else, and it holds the first line of what was asked in each.
 #
 # To share it anyway, delete the two lines below and keep this file: it is

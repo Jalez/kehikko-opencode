@@ -1,48 +1,50 @@
 import { afterAll, beforeEach, describe, expect, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+const sid = () => `ses_${randomUUID().replace(/-/g, '')}`
+import { mkdtempSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { answer } from '../doors.ts'
+import { removeKit } from '../skills.ts'
 import { RESUME_LINE, Runs, TICKET, headless, type Pty, type Run, type Viewer } from '../live.ts'
 import { PROGRAM, type Active, type Program, type Recorded } from '../program.ts'
 import { born, markSession, readPlaces, readSettings, writeSettings, type NamedPlace } from '../record.ts'
 import { DEFAULTS } from '../settings.ts'
 import { resumeToggle } from '../src/view/conversations.ts'
-import { completed, started, typed, writeRollout } from './transcripts.ts'
+import { typed, writeRollout } from './transcripts.ts'
 
 /**
- * What a restart cut off. A Codex session started here is a child of this module's process (its
- * hooks and doors are per-run settings, which keep it off Codex's shared background server), so a
+ * What a restart cut off. A OpenCode session started here is a child of this module's process (its
+ * hooks and doors are per-run settings, which keep it off OpenCode's shared background server), so a
  * restart of the module ends it; the next open of its place resumes it by id. A conversation the
  * module saw working when it went is said in the Inbox, and — unless the person turned it off —
  * told what happened when it is next opened.
  */
 
-let A = randomUUID()
-let C = randomUUID()
+let A = sid()
+let C = sid()
 beforeEach(() => {
-  A = randomUUID()
-  C = randomUUID()
+  A = sid()
+  C = sid()
 })
 const HERE: NamedPlace = { epic: 'thesis', parts: ['methods'], kehikko: { key: '4072c9e5' }, kehikkoName: 'writing' }
 
 const made: string[] = []
 const project = () => {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'kehikko-codex-restart-')))
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'kehikko-opencode-restart-')))
   made.push(dir)
   return dir
 }
 afterAll(() => {
-  for (const dir of made) rmSync(dir, { recursive: true, force: true })
+  for (const dir of made) removeKit(dir)
 })
 
 class FakePty implements Pty {
   pid = 0
   killed = false
   private exited: (exit: { exitCode: number }) => void = () => {}
-  constructor(readonly file: string, readonly args: string[]) {}
+  constructor(readonly file: string, readonly args: string[], readonly env: NodeJS.ProcessEnv = {}) {}
   onData() {}
   onExit(heard: (exit: { exitCode: number }) => void) {
     this.exited = heard
@@ -83,7 +85,8 @@ function machine() {
       const program: Program = {
         ...PROGRAM,
         find: () => ({ file: '/fake/bin/codex', looked: [], usual: [] }),
-        supports: async () => ({ ok: true, missing: null, tells: false, lists: true, names: false, configures: false, plugins: false, backgrounds: false }),
+        /* A copy that takes the plugin: the sentence for a conversation cut off is the plugin's to send. */
+        supports: async () => ({ ok: true, missing: null, tells: true, lists: true, names: false, configures: true, plugins: true, backgrounds: false, tools: true }),
         active: async () => ({ known: true, active: [...running.values()] }),
         settled: async (projectPath, id) => (held.get(projectPath)?.some((one) => one.id === id) ? id : null),
         sessions: async (projectPath) => held.get(projectPath) ?? [],
@@ -94,12 +97,16 @@ function machine() {
         grace: 60_000,
         heldWait: 0,
         every: null,
+        port: () => 8130,
+        configBase: project(),
+        doors: async () => [],
+        fetch: (async () => new Response('', { status: 404 })) as unknown as typeof fetch,
         watchEvery: null,
         log: (line) => logged.push(line),
         ...(options.now ? { now: options.now } : {}),
         screen: headless,
-        spawn: (file, args) => {
-          const pty = new FakePty(file, args)
+        spawn: (file, args, opts) => {
+          const pty = new FakePty(file, args, opts.env)
           ptys.push(pty)
           return pty
         },
@@ -116,7 +123,7 @@ const entryOf = (dir: string, id: string) => {
   if (!read.ok) throw new Error(read.error)
   return read.value.sessions[id]
 }
-/** Seen working by a module that then went away, and the Codex process with it. */
+/** Seen working by a module that then went away, and the OpenCode process with it. */
 const wasWorking = (dir: string, id: string) =>
   markSession(dir, id, (one) => {
     one.working = new Date().toISOString()
@@ -138,13 +145,15 @@ describe('a conversation a restart cut off mid-turn', () => {
     expect(entryOf(dir, A)?.resumeLine).toBe(true)
     const row = second.runs.activity(dir).find((one) => one.id === `cut-off:${A}`)
     expect(row).toMatchObject({ state: 'attention', label: 'tighten the methods: its turn was cut off when Kehikot restarted', place: { epic: 'thesis', parts: ['methods'], kehikko: '4072c9e5' } })
-    /* Nothing is started by itself: Codex has no background to wake it in. */
+    /* Nothing is started by itself: OpenCode has no background to wake it in. */
     expect(second.ptys).toHaveLength(0)
 
     /* The person opens it: resumed with this module's one sentence, and the line goes. */
     const run = await second.runs.open(open(dir, A), new Watcher())
     expect(isRun(run)).toBe(true)
-    expect(second.ptys[0]!.args).toEqual(['resume', A, RESUME_LINE])
+    expect(second.ptys[0]!.args).toEqual(['--session', A])
+    expect(second.ptys[0]!.env.KEHIKOT_OPENCODE_SAY).toBe(RESUME_LINE)
+    expect(second.ptys[0]!.env.KEHIKOT_OPENCODE_SAY_TO).toBe(A)
     expect(entryOf(dir, A)?.resumeLine).toBeUndefined()
     expect(second.runs.activity(dir).some((one) => one.id === `cut-off:${A}`)).toBe(false)
 
@@ -152,7 +161,8 @@ describe('a conversation a restart cut off mid-turn', () => {
     second.ptys[0]!.kill()
     await settle()
     await second.runs.open(open(dir, A), new Watcher())
-    expect(second.ptys[1]!.args).toEqual(['resume', A])
+    expect(second.ptys[1]!.args).toEqual(['--session', A])
+    expect(second.ptys[1]!.env.KEHIKOT_OPENCODE_SAY).toBeUndefined()
   })
 
   test('not told when the person turned the setting off: the Inbox line says it, and opening it is a plain resume', async () => {
@@ -169,7 +179,8 @@ describe('a conversation a restart cut off mid-turn', () => {
     expect(entryOf(dir, A)?.resumeLine).toBeUndefined()
     expect(second.runs.activity(dir).some((one) => one.id === `cut-off:${A}`)).toBe(true)
     await second.runs.open(open(dir, A), new Watcher())
-    expect(second.ptys[0]!.args).toEqual(['resume', A])
+    expect(second.ptys[0]!.args).toEqual(['--session', A])
+    expect(second.ptys[0]!.env.KEHIKOT_OPENCODE_SAY).toBeUndefined()
     expect(second.runs.activity(dir).some((one) => one.id === `cut-off:${A}`)).toBe(false)
   })
 
@@ -186,7 +197,7 @@ describe('a conversation a restart cut off mid-turn', () => {
     first.runs.end(A)
     await settle()
     wasWorking(dir, C)
-    m.running.set(C, { session: C, kind: 'interactive', called: 'a Codex process', handle: null, pid: 77, cwd: dir, startedAt: null, name: '' })
+    m.running.set(C, { session: C, kind: 'interactive', called: 'an OpenCode process', handle: null, pid: 77, cwd: dir, startedAt: null, name: '' })
     const second = m.module()
     second.runs.know(dir)
     await second.runs.recovered(dir)
@@ -195,21 +206,16 @@ describe('a conversation a restart cut off mid-turn', () => {
     expect(second.runs.activity(dir).filter((one) => one.id.startsWith('cut-off:'))).toEqual([])
   })
 
-  test('one recorded before the mark is judged by its transcript: a turn under way was cut off, an ended one was not', async () => {
+  test('one recorded before the mark is not guessed at: OpenCode keeps no transcript to judge it by, so only the mark says a turn was cut off', async () => {
     const m = machine()
     const dir = project()
     m.records(dir, A)
-    m.records(dir, C)
     born(dir, HERE, A, null)
-    born(dir, HERE, C, null)
-    const now = Date.now()
-    writeRollout(A, dir, [started(now - 60_000), typed(now - 60_000)])
-    writeRollout(C, dir, [started(now - 60_000), typed(now - 60_000), completed(now - 50_000)])
+    writeRollout(A, dir, [typed(Date.now() - 60_000)])
     const one = m.module()
     one.runs.know(dir)
     await one.runs.recovered(dir)
-    expect(entryOf(dir, A)?.resumeLine).toBe(true)
-    expect(entryOf(dir, C)?.resumeLine).toBeUndefined()
+    expect(entryOf(dir, A)?.resumeLine).toBeUndefined()
   })
 })
 

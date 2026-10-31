@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { cutOffWords, cutOffs, midTurn, movedOn } from '../cutoff.ts'
 
-/** How a Codex conversation's record says it ended (rows measured on 0.164.0). */
+/** How an OpenCode conversation's record says it ended (rows measured on 0.164.0). */
 
 const ev = (type: string, at = '2026-10-26T01:00:00.000Z', more: Record<string, unknown> = {}) => JSON.stringify({ timestamp: at, type: 'event_msg', payload: { type, ...more } })
 const said = (text: string, at: string) => ev('item_completed', at, { item: { type: 'UserMessage', content: [{ type: 'text', text }] } })
@@ -22,7 +22,7 @@ describe('a turn cut off', () => {
     expect(movedOn(said('Kehikot restarted.', '2026-10-26T01:00:05.000Z'), 0, ['Kehikot restarted.'])).toBe(false)
   })
 
-  test('Codex writes nothing about background work a session’s end cut off, so none is found', () => {
+  test('OpenCode writes nothing about background work a session’s end cut off, so none is found', () => {
     expect(cutOffs([ev('task_started'), said('x', '2026-10-26T01:00:00.000Z')].join('\n'))).toEqual([])
   })
 

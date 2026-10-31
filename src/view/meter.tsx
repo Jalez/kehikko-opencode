@@ -5,9 +5,9 @@ import { Button } from '@/components/ui/button'
 
 /**
  * The context meter: one thin line under the session on screen, saying how full its context window
- * is, its model and whether it was compacted — read from its transcript by the server
- * (`meter.ts`), with nothing typed into the conversation. Pressing it opens a breakdown like
- * Codex's own `/status`, as far as the figures go. Beside it, Compact and Clear: the
+ * is, its model, its cost and whether it was compacted — as the session's plugin reports it to
+ * the server (`meter.ts`), with nothing typed into the conversation. Pressing it opens a breakdown, as far as the
+ * figures go. Beside it, Compact and Clear: the
  * person's to press and nobody else's, typed at the prompt only while the session waits there.
  *
  * ## Why a line in the page and not the header
@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button'
  * ## Never colour alone
  *
  * The meter's fill has a colour, and the same thing is always said in words: the percentage beside
- * it, and "compacts soon" ten points before where Codex compacts by itself. Not ready is said in words too — on
+ * it, and "compacts soon" ten points before where OpenCode compacts by itself. Not ready is said in words too — on
  * the buttons' titles, in the breakdown, and in the line itself when one is pressed.
  */
 
@@ -31,11 +31,11 @@ export const ARMED_MS = 6_000
 const SAID_MS = 6_000
 
 /** What the line says while Clear is armed: that the session starts over, and that the old one is kept. */
-export const CLEAR_ARMED = 'Clear starts this session over as a new conversation. This one is kept: reopen it from the View menu or with /resume. Press Clear again to clear.'
-const COMPACT_MEANS = 'Compact: Codex’s own /compact, typed at the prompt — the conversation so far is summarised, and the window holds the summary.'
-const CLEAR_MEANS = 'Clear: Codex’s own /clear, typed at the prompt — a new conversation starts here. This one is kept and can be reopened.'
+export const CLEAR_ARMED = 'Clear starts this session over as a new conversation. This one is kept: reopen it from the View menu or with /sessions. Press Clear again to clear.'
+const COMPACT_MEANS = 'Compact: OpenCode’s own /compact, typed at the prompt — the conversation so far is summarised, and the window holds the summary.'
+const CLEAR_MEANS = 'Clear: OpenCode’s own /clear (its /new), typed at the prompt — a new conversation starts here. This one is kept and can be reopened.'
 /** What cannot be known from here, said in the breakdown rather than guessed. */
-export const NO_SPLIT = 'How the window splits into instructions, tools and messages is not written anywhere Codex keeps: its transcript carries totals.'
+export const NO_SPLIT = 'How the window splits into instructions, tools and messages is not reported: OpenCode says totals for each answer.'
 
 function Bar({ context, wide = false }: { context: Context; wide?: boolean }) {
   const pct = context.percent ?? 0
@@ -47,7 +47,7 @@ function Bar({ context, wide = false }: { context: Context; wide?: boolean }) {
       data-meter-bar={pct}
     >
       <span className={`absolute inset-y-0 left-0 rounded-full ${context.soon ? 'bg-[var(--needs-you)]' : 'bg-foreground/60'}`} style={{ width: `${pct}%` }} />
-      {/* Where Codex compacts by itself: a tick, named in words wherever it matters. */}
+      {/* Where OpenCode compacts by itself: a tick, named in words wherever it matters. */}
       <span className="bg-foreground/50 absolute inset-y-0 w-px" style={{ left: `${at}%` }} />
     </span>
   )
@@ -62,29 +62,29 @@ function Breakdown({ context, ready, id }: { context: Context | null; ready: str
     return (
       <div id={id} role="dialog" aria-label="Context window" className="space-y-1.5" data-breakdown>
         <p className="text-foreground font-medium">Context window</p>
-        <p>Nothing has been sent in this conversation yet: Codex counts the window from its first request.</p>
+        <p>Nothing has been answered in this conversation since it was opened here: the window is counted from the next answer.</p>
         {ready ? <p>Compact and Clear: {ready}</p> : null}
       </div>
     )
   }
   const words = contextWords(context)
   const rows: [string, string][] = [
-    ['In use', context.tokens === null ? 'nothing sent yet' : `${context.afterCompact ? 'about ' : ''}${number(context.tokens)} of ${number(context.window)} tokens (${words.percent})`],
-    ['Window', `${number(context.window)} tokens — ${context.windowSure ? 'as Codex itself said: the model’s window less the room Codex keeps' : 'not said yet'}`],
-    ['Compacts', `by itself at about ${number(context.compactAt)} (${percentOf(context.compactAt, context.window)}%): Codex compacts at 90% of the model’s whole window, unless your config says less. This line says “compacts soon” from about ${number(context.warnAt)}`],
+    ['In use', context.tokens === null ? 'not known until the next answer' : `${context.afterCompact ? 'about ' : ''}${number(context.tokens)} of ${number(context.window)} tokens (${words.percent})`],
+    ['Window', `${number(context.window)} tokens — ${context.windowSure ? 'the model’s window, as OpenCode knows the model' : 'not said yet'}`],
+    ['Compacts', `by itself at about ${number(context.compactAt)} (${percentOf(context.compactAt, context.window)}%): OpenCode compacts when the window is full but for the room an answer needs (the compaction setting in your config can change that). This line says “compacts soon” from about ${number(context.warnAt)}`],
   ]
   if (context.model) rows.push(['Model', `${context.model.name} (${context.model.id})`])
   if (context.split) {
-    rows.push(['Last request', `new input ${number(context.split.input)} · read from the cache ${number(context.split.cacheRead)} · written to the cache ${number(context.split.cacheWrite)} · output ${number(context.split.output)}`])
+    rows.push(['Last answer', `new input ${number(context.split.input)} · read from the cache ${number(context.split.cacheRead)} · written to the cache ${number(context.split.cacheWrite)} · output ${number(context.split.output)}`])
   } else if (context.afterCompact) {
-    rows.push(['Last request', 'none since the last compaction: the figure is what it compacted to'])
+    rows.push(['Last answer', 'none since the last compaction: the figure is from before it'])
   }
-  rows.push(['Cost', context.cost ? costSaid(context.cost.usd) : 'not reported: Codex writes tokens, not money'])
+  rows.push(['Cost', context.cost ? `${costSaid(context.cost.usd)}, as OpenCode priced this conversation` : 'nothing priced: OpenCode writes 0 for a model it has no price for'])
   rows.push([
     'Compacted',
     context.compacted
       ? `${context.compacted.times === 1 ? 'once' : `${context.compacted.times} times`} — last ${context.compacted.last.trigger === 'manual' ? 'by /compact' : 'by itself'}${context.compacted.last.at ? ` at ${clock(context.compacted.last.at)}` : ''}${context.compacted.last.before !== null && context.compacted.last.after !== null ? `, ${tokensSaid(context.compacted.last.before)} → ${tokensSaid(context.compacted.last.after)}` : ''}`
-      : 'no compaction in what was read',
+      : 'none heard since it was opened here',
   ])
   return (
     <div id={id} role="dialog" aria-label="Context window" className="space-y-1.5" data-breakdown>
@@ -183,7 +183,7 @@ export function ContextLine({
     }
     setArmed(false)
     const went = onCommand(which)
-    setSaid({ text: went ? (which === 'compact' ? 'Compact sent: Codex is compacting the conversation.' : 'Clear sent: a new conversation starts here.') : 'The session’s connection is not open; nothing was sent.', at: Date.now() })
+    setSaid({ text: went ? (which === 'compact' ? 'Compact sent: OpenCode is compacting the conversation.' : 'Clear sent: a new conversation starts here.') : 'The session’s connection is not open; nothing was sent.', at: Date.now() })
   }
 
   const message = armed ? CLEAR_ARMED : said?.text ?? null

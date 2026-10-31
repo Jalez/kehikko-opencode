@@ -1,299 +1,303 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, openSync, closeSync, realpathSync, rmSync, writeFileSync, symlinkSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
-import { HOOK_KEYS, PROGRAM, deniedWrite, hasBrew, installFor, npmPrefix, TELLS, codexHome, firstPrompt, headOf, hookHash, home, learnSession, metaOf, nativeOf, readLsof, recordFile, sessionName } from '../program.ts'
-import { CONFIG, HOME } from './setup.ts'
+import { BREW_LINE, CURL_LINE, PROGRAM, WORDS, databaseFile, dataDir, deniedWrite, folderOfRecord, hasBrew, headOf, home, installFor, isDefaultTitle, learnSession, nativeOf, npmPrefix, readPs, recordFile, sessionName, sessionsQuery, versionOf } from '../program.ts'
+import { DATA, HOME } from './setup.ts'
+import { T0, retitle, typed, writeRollout } from './transcripts.ts'
 
 /**
- * The adapter, against a stand-in `codex` and a scratch `CODEX_HOME`.
+ * The adapter, against a stand-in `opencode` and a scratch OpenCode database.
  *
  * Nothing here runs the real program or reads a real record: `test/setup.ts` has already pointed
- * the home folder, `CODEX_HOME` and PATH at scratch.
+ * the home folder, OpenCode's data folder and PATH at scratch.
  */
 
-const STAND_IN = join(import.meta.dir, 'stand-in', 'codex')
+const STAND_IN = join(import.meta.dir, 'stand-in', 'opencode')
 const made: string[] = []
 const scratch = (name: string) => {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), `kehikko-codex-${name}-`)))
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), `kehikko-opencode-${name}-`)))
   made.push(dir)
   return dir
 }
 afterAll(() => {
   for (const dir of made) rmSync(dir, { recursive: true, force: true })
-  rmSync(join(HOME, '.local'), { recursive: true, force: true })
-  rmSync(join(CONFIG, 'sessions'), { recursive: true, force: true })
+  rmSync(join(HOME, '.opencode'), { recursive: true, force: true })
 })
 
-const A = '01a175cc-82f0-77b1-a11b-77a47b470116'
-const B = '01a175cd-511f-7de0-b010-09ebe2616f33'
+const A = 'ses_01a175cc82f077b1a11b77a47b470116'
+const B = 'ses_01a175cd511f7de0b01009ebe2616f33'
 
-/** A rollout as Codex 0.164.0 writes one: the meta row, then the person's line. */
-function rollout(id: string, cwd: string, said: string, more: Record<string, unknown> = {}): string {
-  const dir = join(CONFIG, 'sessions', '2026', '10', '26')
-  mkdirSync(dir, { recursive: true })
-  const file = join(dir, `rollout-2026-10-26T03-21-39-${id}.jsonl`)
-  writeFileSync(
-    file,
-    [
-      { timestamp: '2026-10-26T01:22:36.741Z', type: 'session_meta', payload: { id, cwd, source: 'cli', thread_source: 'user', base_instructions: 'You are Codex.'.repeat(500), ...more } },
-      { timestamp: '2026-10-26T01:22:36.746Z', type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>…</environment_context>' }] } },
-      { timestamp: '2026-10-26T01:22:36.766Z', type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: said }] } } },
-    ].map((one) => JSON.stringify(one)).join('\n') + '\n',
-  )
-  return file
-}
+describe('where it keeps things', () => {
+  test('its data folder follows XDG_DATA_HOME, else ~/.local/share; its database is opencode.db there unless OPENCODE_DB says', () => {
+    expect(dataDir()).toBe(join(DATA, 'opencode'))
+    expect(dataDir({ HOME: '/h' })).toBe('/h/.local/share/opencode')
+    expect(databaseFile({ HOME: '/h' })).toBe('/h/.local/share/opencode/opencode.db')
+    expect(databaseFile({ HOME: '/h', OPENCODE_DB: '/x/y.db' })).toBe('/x/y.db')
+    expect(databaseFile({ HOME: '/h', OPENCODE_DB: 'other.db' })).toBe('/h/.local/share/opencode/other.db')
+    expect(home({ HOME: '/h' })).toBe('/h')
+  })
+})
 
 describe('finding the binary', () => {
-  test('the test’s machine is scratch: a home of its own and Codex’s folder beside it', () => {
-    expect(home()).toBe(HOME)
-    expect(codexHome()).toBe(CONFIG)
-  })
-
-  test('on PATH first, then the usual places a thin PATH leaves out, the desktop app’s among them', () => {
+  test('on PATH first, then the usual places a thin PATH leaves out, the installer’s own folder first', () => {
     const bin = scratch('bin')
-    copyFileSync(STAND_IN, join(bin, 'codex'))
-    chmodSync(join(bin, 'codex'), 0o755)
-    const found = PROGRAM.find({ HOME, PATH: `/nowhere:${bin}`, KEHIKOT_CODEX_TOOL_DIRS: '' })
-    expect(found.file).toBe(join(bin, 'codex'))
-    expect(found.looked).toEqual(['/nowhere', bin])
-    const none = PROGRAM.find({ HOME, PATH: '/usr/bin:/bin', KEHIKOT_CODEX_TOOL_DIRS: '' })
+    copyFileSync(STAND_IN, join(bin, 'opencode'))
+    chmodSync(join(bin, 'opencode'), 0o755)
+    const found = PROGRAM.find({ HOME, PATH: `${bin}:/usr/bin`, KEHIKOT_OPENCODE_TOOL_DIRS: '' })
+    expect(found.file).toBe(join(bin, 'opencode'))
+    const none = PROGRAM.find({ HOME, PATH: '/usr/bin', KEHIKOT_OPENCODE_TOOL_DIRS: '' })
     expect(none.file).toBeNull()
-    expect(none.looked).toContain('/opt/homebrew/bin')
-    expect(none.looked).toContain('/Applications/Codex.app/Contents/Resources')
+    expect(none.usual[0]).toBe(join(HOME, '.opencode', 'bin'))
+    expect(none.usual).toContain('/opt/homebrew/bin')
   })
 
-  test('an npm launcher is run as the binary behind it, so no `node` has to be on PATH', () => {
+  test('an npm launcher is run as the native binary behind it, so no `node` has to be on PATH', () => {
     const root = scratch('npm')
-    const pkg = join(root, 'lib', 'node_modules', '@openai', 'codex')
+    const pkg = join(root, 'lib', 'node_modules', 'opencode-ai')
     mkdirSync(join(pkg, 'bin'), { recursive: true })
-    writeFileSync(join(pkg, 'bin', 'codex.js'), '#!/usr/bin/env node\n')
-    chmodSync(join(pkg, 'bin', 'codex.js'), 0o755)
-    const key = `${process.platform}-${process.arch}`
-    const triple = { 'darwin-arm64': 'aarch64-apple-darwin', 'darwin-x64': 'x86_64-apple-darwin', 'linux-x64': 'x86_64-unknown-linux-musl', 'linux-arm64': 'aarch64-unknown-linux-musl' }[key]!
-    const native = join(pkg, 'node_modules', '@openai', `codex-${key}`, 'vendor', triple, 'bin', 'codex')
+    writeFileSync(join(pkg, 'bin', 'opencode'), '#!/usr/bin/env node\n')
+    chmodSync(join(pkg, 'bin', 'opencode'), 0o755)
+    const native = join(root, 'lib', 'node_modules', `opencode-${process.platform}-${process.arch}`, 'bin', 'opencode')
     mkdirSync(join(native, '..'), { recursive: true })
-    writeFileSync(native, '#!/bin/sh\n')
+    writeFileSync(native, 'binary')
     chmodSync(native, 0o755)
     mkdirSync(join(root, 'bin'))
-    symlinkSync(join(pkg, 'bin', 'codex.js'), join(root, 'bin', 'codex'))
-    expect(nativeOf(join(root, 'bin', 'codex'))).toBe(native)
-    expect(PROGRAM.find({ HOME, PATH: join(root, 'bin'), KEHIKOT_CODEX_TOOL_DIRS: '' }).file).toBe(native)
-    /* Anything else is what it was. */
+    symlinkSync(join(pkg, 'bin', 'opencode'), join(root, 'bin', 'opencode'))
+    expect(nativeOf(join(root, 'bin', 'opencode'))).toBe(native)
+    /* The copy the launcher keeps beside itself is preferred. */
+    writeFileSync(join(pkg, 'bin', '.opencode'), 'binary')
+    chmodSync(join(pkg, 'bin', '.opencode'), 0o755)
+    expect(nativeOf(join(root, 'bin', 'opencode'))).toBe(join(pkg, 'bin', '.opencode'))
+    /* Anything else is run as it is. */
     expect(nativeOf(STAND_IN)).toBe(STAND_IN)
   })
 })
 
 describe('whether a copy can do what is asked of it', () => {
-  test('one with `resume`, `--config` and hook trust can, and reports when its hooks are on', async () => {
-    const able = await PROGRAM.supports(STAND_IN)
-    expect(able).toMatchObject({ ok: true, missing: null, tells: true, lists: true, configures: true, plugins: true, backgrounds: false, names: false })
+  const copy = (name: string) => {
+    const bin = scratch(name)
+    copyFileSync(STAND_IN, join(bin, 'opencode'))
+    chmodSync(join(bin, 'opencode'), 0o755)
+    copyFileSync(join(import.meta.dir, 'stand-in', 'opencode.ts'), join(bin, 'opencode.ts'))
+    return join(bin, 'opencode')
+  }
+
+  test('a 1.x copy with `--session` can: it takes a configuration folder, a plugin, skills and, from 1.14.49, a plugin’s tool', async () => {
+    const able = await PROGRAM.supports(copy('able'))
+    expect(able).toMatchObject({ ok: true, missing: null, tells: true, lists: true, configures: true, plugins: true, tools: true, version: '1.19.5' })
   })
 
-  test('one with no `resume` is too old, and says what it lacks', async () => {
-    const bin = scratch('old')
-    writeFileSync(join(bin, 'codex'), `#!/bin/sh\nSTANDIN_OLD=1 exec ${JSON.stringify(STAND_IN)} "$@"\n`)
-    chmodSync(join(bin, 'codex'), 0o755)
-    expect(await PROGRAM.supports(join(bin, 'codex'))).toMatchObject({ ok: false, missing: 'resume' })
+  test('one with no `--session` is too old, and says what it lacks', async () => {
+    process.env.STANDIN_OLD = '1'
+    try {
+      expect(await PROGRAM.supports(copy('old'))).toMatchObject({ ok: false, missing: '--session' })
+    } finally {
+      delete process.env.STANDIN_OLD
+    }
   })
 
-  test('one whose hooks are off has no state, and is otherwise the same', async () => {
-    const bin = scratch('nohooks')
-    writeFileSync(join(bin, 'codex'), `#!/bin/sh\nSTANDIN_NOHOOKS=1 exec ${JSON.stringify(STAND_IN)} "$@"\n`)
-    chmodSync(join(bin, 'codex'), 0o755)
-    expect(await PROGRAM.supports(join(bin, 'codex'))).toMatchObject({ ok: true, tells: false, configures: true, plugins: false })
+  test('one before 1.0 is started as in a terminal: no folder, no state; before 1.14.49 no tool', async () => {
+    process.env.STANDIN_VERSION = '0.15.2'
+    try {
+      expect(await PROGRAM.supports(copy('zero'))).toMatchObject({ ok: true, tells: false, configures: false, plugins: false, tools: false })
+    } finally {
+      delete process.env.STANDIN_VERSION
+    }
+    process.env.STANDIN_VERSION = '1.12.0'
+    try {
+      expect(await PROGRAM.supports(copy('twelve'))).toMatchObject({ ok: true, tells: true, configures: true, tools: false })
+    } finally {
+      delete process.env.STANDIN_VERSION
+    }
   })
 
-  test('one whose help cannot be read is not called too old: nothing was learned, and nothing extra is passed', async () => {
+  test('one whose answers cannot be read at all is not called too old: nothing was learned, and nothing extra is passed', async () => {
     const bin = scratch('mute')
-    writeFileSync(join(bin, 'codex'), '#!/bin/sh\nexit 3\n')
-    chmodSync(join(bin, 'codex'), 0o755)
-    expect(await PROGRAM.supports(join(bin, 'codex'))).toMatchObject({ ok: true, tells: false, configures: false })
+    writeFileSync(join(bin, 'opencode'), '#!/bin/sh\nexit 3\n')
+    chmodSync(join(bin, 'opencode'), 0o755)
+    expect(await PROGRAM.supports(join(bin, 'opencode'))).toMatchObject({ ok: true, tells: false, configures: false })
+  })
+
+  test('a version is read out of whatever line names it', () => {
+    expect(versionOf('1.19.5')).toEqual([1, 19, 5])
+    expect(versionOf('opencode 2.2.5\n')).toEqual([2, 2, 5])
+    expect(versionOf('nothing')).toBeNull()
   })
 })
 
 describe('starting and resuming', () => {
-  test('a new session has no arguments of its own — Codex chooses the id; a resumed one is `resume <id>`', () => {
+  test('a new session has no arguments of its own — OpenCode chooses the id; a recorded one is `--session <id>`', () => {
     expect(PROGRAM.fresh(A)).toEqual([])
-    expect(PROGRAM.resume(A)).toEqual(['resume', A])
-    expect(PROGRAM.resume(A, undefined, 'Kehikot restarted.')).toEqual(['resume', A, 'Kehikot restarted.'])
-    /* A line that could read as a flag is not passed. */
-    expect(PROGRAM.resume(A, undefined, '--yolo')).toEqual(['resume', A])
-    expect(() => PROGRAM.resume('--last')).toThrow()
+    expect(PROGRAM.resume(A)).toEqual(['--session', A])
+    /* The sentence for a conversation a restart cut off is the plugin's to send, never an argument. */
+    expect(PROGRAM.resume(A, undefined, 'Kehikot restarted…')).toEqual(['--session', A])
+    expect(() => PROGRAM.resume('--dangerous')).toThrow()
   })
 
-  test('an id it mints is one it accepts, and what is not an id is refused', () => {
-    expect(PROGRAM.isId(PROGRAM.newId())).toBe(true)
+  test('an id it mints is one it accepts, spelled as OpenCode spells one, and what is not an id is refused', () => {
+    const id = PROGRAM.newId()
+    expect(PROGRAM.isId(id)).toBe(true)
+    expect(id.startsWith('ses_kehikot')).toBe(true)
     expect(PROGRAM.isId(A)).toBe(true)
-    for (const not of ['', '../x', '--last', 'A1A175CC-82F0-77B1-A11B-77A47B470116 ']) expect(PROGRAM.isId(not)).toBe(false)
+    for (const bad of ['', 'ses_', 'ses_a b', '11111111-1111-4111-8111-111111111111', '../ses_aaaaaaaaaaaa', `ses_${'a'.repeat(80)}`]) expect(PROGRAM.isId(bad)).toBe(false)
   })
 
-  test('the session’s environment does not say it is inside another Codex’s command', () => {
-    const env = PROGRAM.environment({ PATH: '/bin', CODEX_THREAD_ID: A, CODEX_SANDBOX: 'seatbelt', CODEX_HOME: '/h', OPENAI_API_KEY: 'k' })
-    expect(env).toEqual({ PATH: '/bin', CODEX_HOME: '/h', OPENAI_API_KEY: 'k' })
+  test('the session’s environment does not say it is inside another OpenCode, and keeps the person’s keys where they are', () => {
+    const env = PROGRAM.environment({ PATH: '/bin', OPENCODE: '1', OPENCODE_CONFIG_DIR: '/other', OPENCODE_SERVER_PASSWORD: 'p', KEHIKOT_OPENCODE_SESSION: A, ANTHROPIC_API_KEY: 'k' })
+    expect(env).toEqual({ PATH: '/bin', ANTHROPIC_API_KEY: 'k' })
   })
 
   test('a session runs the person’s bun and node, never the ones the host put first on this module’s PATH', () => {
-    const scratch = mkdtempSync(join(tmpdir(), 'codex-person-env-'))
-    try {
-      const hostShim = join(scratch, 'kehikot-bun-1')
-      const bunNode = join(scratch, 'bun-node-502-x')
-      for (const dir of [hostShim, bunNode]) {
-        mkdirSync(dir)
-        symlinkSync(process.execPath, join(dir, 'bun'))
-      }
-      symlinkSync(process.execPath, join(bunNode, 'node'))
-      const person = join(scratch, 'person')
-      mkdirSync(person)
-      writeFileSync(join(person, 'bun'), '#!/bin/sh\necho person-bun\n')
-      chmodSync(join(person, 'bun'), 0o755)
-      const env = PROGRAM.environment({
-        PATH: [bunNode, hostShim, person, '/usr/bin', '/bin'].join(delimiter),
-        KEHIKOT_HOST_PATH: hostShim,
-        BUN_BE_BUN: '1',
-        CODEX_THREAD_ID: A,
-      })
-      expect(env.BUN_BE_BUN).toBeUndefined()
-      expect(env.KEHIKOT_HOST_PATH).toBeUndefined()
-      expect(env.CODEX_THREAD_ID).toBeUndefined()
-      expect(env.PATH).toBe([person, '/usr/bin', '/bin'].join(delimiter))
-      const ran = spawnSync('/bin/sh', ['-c', 'command -v bun; bun --version'], { env, encoding: 'utf8' })
-      expect(ran.stdout).toBe(`${join(person, 'bun')}\nperson-bun\n`)
-    } finally {
-      rmSync(scratch, { recursive: true, force: true })
+    const dir = scratch('person-env')
+    const hostShim = join(dir, 'kehikot-bun-1')
+    const bunNode = join(dir, 'bun-node-502-x')
+    for (const one of [hostShim, bunNode]) {
+      mkdirSync(one)
+      symlinkSync(process.execPath, join(one, 'bun'))
     }
+    symlinkSync(process.execPath, join(bunNode, 'node'))
+    const person = join(dir, 'person')
+    mkdirSync(person)
+    writeFileSync(join(person, 'bun'), '#!/bin/sh\necho person-bun\n')
+    chmodSync(join(person, 'bun'), 0o755)
+    const env = PROGRAM.environment({ PATH: [bunNode, hostShim, person, '/usr/bin', '/bin'].join(delimiter), KEHIKOT_HOST_PATH: hostShim, BUN_BE_BUN: '1' })
+    expect(env.BUN_BE_BUN).toBeUndefined()
+    expect(env.KEHIKOT_HOST_PATH).toBeUndefined()
+    expect(env.PATH).toBe([person, '/usr/bin', '/bin'].join(delimiter))
+    const ran = spawnSync('/bin/sh', ['-c', 'command -v bun; bun --version'], { env, encoding: 'utf8' })
+    expect(ran.stdout).toBe(`${join(person, 'bun')}\nperson-bun\n`)
   })
 })
 
-describe('the hooks, given for one process and trusted for it alone', () => {
-  test('the trust hash is the one Codex 0.164.0 wrote when the same hook was trusted in its /hooks screen', () => {
-    /* Measured: `[hooks.state."/<session-flags>/config.toml:session_start:0:0"] trusted_hash = …` after "Trust all". */
-    expect(hookHash('SessionStart', undefined, '/bin/sh /tmp/cx/scratch/hook/tell.sh SessionStart', 5)).toBe('sha256:a322356ad3ea596fa4afd4f50e015eb29c1d60298e33041aa149145ce8eb13a2')
-  })
-
-  test('each event is one `-c hooks.<Event>`, and one `-c hooks.state` trusts exactly those handlers by key and hash', () => {
-    const args = PROGRAM.hookArgs([
-      { event: 'Stop', commands: [{ command: "/bin/sh '/m/tell.sh' Stop", timeout: 5 }] },
-      { event: 'UserPromptSubmit', commands: [{ command: 'a', timeout: 5 }, { command: 'b', timeout: 10 }] },
-      { event: 'PreToolUse', matcher: '^request_user_input', commands: [{ command: 'q', timeout: 5 }] },
-      { event: 'Interrupt', commands: [{ command: 'i', timeout: 5 }] },
-    ])
-    expect(args.filter((one) => one === '-c').length).toBe(5)
-    expect(args).toContain('hooks.Stop=[{hooks=[{type="command",command="/bin/sh \'/m/tell.sh\' Stop",timeout=5}]}]')
-    expect(args).toContain('hooks.UserPromptSubmit=[{hooks=[{type="command",command="a",timeout=5},{type="command",command="b",timeout=10}]}]')
-    expect(args).toContain('hooks.PreToolUse=[{matcher="^request_user_input",hooks=[{type="command",command="q",timeout=5}]}]')
-    /* Codex caps an Interrupt hook at three seconds. */
-    expect(args).toContain('hooks.Interrupt=[{hooks=[{type="command",command="i",timeout=3}]}]')
-    const state = args.at(-1)!
-    expect(state.startsWith('hooks.state={')).toBe(true)
-    expect(state).toContain(`"/<session-flags>/config.toml:user_prompt_submit:0:1"={trusted_hash="${hookHash('UserPromptSubmit', undefined, 'b', 10)}"}`)
-    expect(state).toContain(`"/<session-flags>/config.toml:pre_tool_use:0:0"={trusted_hash="${hookHash('PreToolUse', '^request_user_input', 'q', 5)}"}`)
-    /* Never the switch that would run the person's own untrusted hooks too. */
-    expect(args.join(' ')).not.toContain('bypass')
-    expect(PROGRAM.hookArgs([])).toEqual([])
-  })
-
-  test('what each report means: working, needs you, finished — and an interrupt is a turn that is over', () => {
+describe('what the plugin says', () => {
+  test('working, needs you, finished — and an interrupt is a turn that is over; the rest are no state', () => {
     expect(PROGRAM.signal('UserPromptSubmit')).toBe('working')
     expect(PROGRAM.signal('PostToolUse')).toBe('working')
     expect(PROGRAM.signal('PermissionRequest')).toBe('needs-you')
     expect(PROGRAM.signal('AskUser')).toBe('needs-you')
     expect(PROGRAM.signal('Stop')).toBe('finished')
     expect(PROGRAM.signal('Interrupt')).toBe('finished')
-    expect(PROGRAM.signal('SessionStart')).toBeNull()
-    expect(PROGRAM.signal('constructor')).toBeNull()
-    expect(TELLS.find((one) => one.says === 'AskUser')).toMatchObject({ event: 'PreToolUse', matcher: '^request_user_input' })
-    expect(Object.keys(HOOK_KEYS)).toContain('Interrupt')
+    for (const word of ['SessionStart', 'Compacted', 'SubagentStart', 'SubagentStop', 'Usage', 'toString', 'nonsense']) expect(PROGRAM.signal(word)).toBeNull()
+  })
+
+  test('every word the plugin posts is one this module knows', () => {
+    const plugin = readFileSync(join(import.meta.dir, '..', 'plugin', 'opencode', 'kehikot.js'), 'utf8')
+    const said = new Set([...plugin.matchAll(/(?:say\([^,()]+(?:\([^)]*\))?, |tell\()'([A-Za-z]+)'/g)].map((one) => one[1]!))
+    expect([...said].sort()).toEqual([...WORDS].sort())
   })
 })
 
 describe('reading a project’s sessions', () => {
-  test('the meta row says the folder and whether it is a person’s conversation', () => {
-    const head = JSON.stringify({ type: 'session_meta', payload: { id: A, cwd: '/p', source: 'cli', thread_source: 'user' } })
-    expect(metaOf(`${head}\n`)).toEqual({ id: A, cwd: '/p', source: 'cli', person: true })
-    expect(metaOf(JSON.stringify({ type: 'session_meta', payload: { id: A, cwd: '/p', source: { subagent: 'x' } } }))?.person).toBe(false)
-    expect(metaOf('{"type":"response_item"}')).toBeNull()
+  test('a folder’s top-level sessions, most recently active first; the label is the title, or the first prompt while OpenCode’s default title stands', async () => {
+    const project = scratch('project')
+    const elsewhere = scratch('elsewhere')
+    writeRollout(A, project, [typed(T0, 'fix the login\nmore lines'), typed(T0 + 5, 'and the tests')], T0 + 1000)
+    writeRollout(B, project, [typed(T0, 'write docs')], T0 + 2000, { title: 'Docs for the parser', cost: 0.42 })
+    writeRollout('ses_child0000000000aaaa', project, [typed(T0, 'a subagent')], T0 + 3000, { parent: A })
+    writeRollout('ses_archived000000aaaa', project, [typed(T0, 'old')], T0 + 4000, { archived: true })
+    writeRollout('ses_elsewhere00000aaaa', elsewhere, [typed(T0, 'other')], T0 + 5000)
+    const found = await PROGRAM.sessions(project)
+    expect(found.map((one) => one.id)).toEqual([B, A])
+    expect(found[1]).toMatchObject({ id: A, label: 'fix the login', firstPrompt: 'fix the login', lastPrompt: 'and the tests', lastActive: T0 + 1000, cost: 0 })
+    expect(found[0]).toMatchObject({ id: B, label: 'Docs for the parser', firstPrompt: 'write docs', cost: 0.42 })
+    /* One named is found wherever it ran. */
+    expect((await PROGRAM.sessions(project, ['ses_elsewhere00000aaaa'])).map((one) => one.id)).toContain('ses_elsewhere00000aaaa')
+    /* A title set later is read again: the database changed. */
+    retitle(A, 'Login fixes')
+    expect((await PROGRAM.sessions(project)).find((one) => one.id === A)?.label).toBe('Login fixes')
+    expect(await folderOfRecord(A)).toBe(project)
   })
 
-  test('the label is the first line of the first thing a person said, as Codex noted it, and nothing else is read', () => {
-    const text = [
-      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [{ type: 'input_text', text: '<environment_context>' }] } }),
-      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'tighten the methods\nsecond line' }] } } }),
-      JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'later' }] } } }),
-    ].join('\n')
-    expect(firstPrompt(text)).toBe('tighten the methods')
-    expect(firstPrompt(JSON.stringify({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ type: 'text', text: 'x'.repeat(200) }] } } })).length).toBe(80)
+  test('the only words read are the person’s own: what Kehikot added to a prompt is never a label', async () => {
+    const project = scratch('synthetic')
+    writeRollout(A, project, [typed(T0, 'the real words')])
+    const found = await PROGRAM.sessions(project)
+    expect(found[0]!.firstPrompt).toBe('the real words')
+    expect(JSON.stringify(found)).not.toContain('Kehikot: notes')
   })
 
-  test('a folder’s sessions, most recently active first, from wherever in the dated folders they are; `codex exec` runs are not conversations', async () => {
-    const dir = scratch('project')
-    rollout(A, dir, 'tighten the methods')
-    rollout(B, dir, 'draft the results')
-    rollout('01a175cd-0000-7000-8000-000000000001', dir, 'a script', { source: 'exec' })
-    rollout('01a175cd-0000-7000-8000-000000000002', '/elsewhere', 'not here')
-    const listed = await PROGRAM.sessions(dir)
-    expect(listed.map((one) => one.id).sort()).toEqual([A, B].sort())
-    expect(listed.find((one) => one.id === A)?.label).toBe('tighten the methods')
-    /* A record the project names is found wherever it ran (a folder that was renamed). */
-    expect((await PROGRAM.sessions(dir, ['01a175cd-0000-7000-8000-000000000002'])).map((one) => one.id)).toContain('01a175cd-0000-7000-8000-000000000002')
+  test('the query names folders and ids as literals, and an id that is not one is never in it', () => {
+    const sql = sessionsQuery(["/tmp/it's here"], [A, "x' or 1=1 --"])
+    expect(sql).toContain("'/tmp/it''s here'")
+    expect(sql).toContain(`'${A}'`)
+    expect(sql).not.toContain('or 1=1')
+    expect(sessionsQuery([], [])).toBe('select 1 where 0')
   })
 
-  test('a session exists once Codex has a record of it; a new one is named by its own hooks', async () => {
-    const dir = scratch('settle')
-    /* Ids of this test's own: the scratch CODEX_HOME is shared with every other test file. */
-    const opened = randomUUID()
-    const chosen = randomUUID()
-    expect(await PROGRAM.settled(dir, opened, 0)).toBeNull()
-    learnSession(opened, chosen)
-    expect(await PROGRAM.settled(dir, opened, 0)).toBeNull()
-    rollout(chosen, dir, 'hello')
-    expect(await PROGRAM.settled(dir, opened, 0)).toBe(chosen)
-    expect(await recordFile(dir, '../etc')).toBeNull()
+  test('OpenCode’s default titles are known as such', () => {
+    expect(isDefaultTitle('New session - 2026-10-21T17:30:00.000Z')).toBe(true)
+    expect(isDefaultTitle('Child session - 2026-10-21T17:30:00.000Z')).toBe(true)
+    expect(isDefaultTitle('New session for the parser')).toBe(false)
   })
 
-  test('a conversation keeps one id: where it is now is that id', () => {
+  test('no database, or no sqlite3, is no sessions — never a failure', async () => {
+    expect(await PROGRAM.sessions('/nowhere')).toEqual([])
+    const before = process.env.KEHIKOT_OPENCODE_SQLITE
+    process.env.KEHIKOT_OPENCODE_SQLITE = ''
+    try {
+      expect(await PROGRAM.sessions(scratch('nosqlite'), ['ses_nosqlite00000aaaa'])).toEqual([])
+    } finally {
+      if (before === undefined) delete process.env.KEHIKOT_OPENCODE_SQLITE
+      else process.env.KEHIKOT_OPENCODE_SQLITE = before
+    }
+  })
+
+  test('a session exists once OpenCode has a record of it; a new one is named by its plugin', async () => {
+    const project = scratch('settle')
+    const opened = PROGRAM.newId()
+    const real = 'ses_settled0000000aaaaa'
+    expect(await PROGRAM.settled(project, opened, 0)).toBeNull()
+    learnSession(opened, real)
+    expect(await PROGRAM.settled(project, opened, 0)).toBeNull()
+    writeRollout(real, project, [typed(T0)])
+    expect(await PROGRAM.settled(project, opened, 0)).toBe(real)
+    expect(await PROGRAM.settled(project, real, 0)).toBe(real)
+  })
+
+  test('there is no transcript file; a conversation is where it is', async () => {
+    expect(await recordFile('/x', A)).toBeNull()
     expect(headOf(A)).toBe(A)
   })
 
   test('a place’s name is one line, never a flag', () => {
-    expect(sessionName(['--x', 'thesis\nmethods'])).toBe('x · thesis methods')
+    expect(sessionName(['--epic', 'a\nb', null, ' parts '])).toBe('epic · a b · parts')
   })
 })
 
-describe('which process holds which conversation', () => {
-  test('lsof’s fields are read for the lock files and nothing else', () => {
-    const said = readLsof(`p4545\nf46\nn/h/thread-writer-locks/${A}.lock\np77\nn/h/thread-writer-locks/not-a-lock\nn/h/thread-writer-locks/${B}.lock\n`)
-    expect([...said]).toEqual([[A, 4545], [B, 77]])
+describe('which process was started on which conversation', () => {
+  test('ps lines of the program itself, with `--session`, `--session=` or `-s`, and nothing else', () => {
+    const said = readPs([
+      `  101 /Users/x/.opencode/bin/opencode --session ${A}`,
+      `  102 /opt/homebrew/bin/opencode -s ${B} --model a/b`,
+      `  103 /x/node_modules/opencode-ai/bin/.opencode --session=ses_third0000000000aaaa`,
+      `  104 vim notes-about-opencode --session ses_vim000000000000aaaa`,
+      `  105 /bin/zsh -c echo opencode`,
+      `  106 /usr/local/bin/opencode`,
+      '    1 /sbin/launchd',
+    ].join('\n'))
+    expect([...said]).toEqual([
+      [A, 101],
+      [B, 102],
+      ['ses_third0000000000aaaa', 103],
+    ])
   })
 
-  test('a lock file a process holds is a conversation running there; one nobody holds is not', async () => {
-    const dir = scratch('locks')
-    const C = '01a175cf-2222-7222-8222-222222222222'
-    rollout(C, dir, 'held')
-    const locks = join(CONFIG, 'thread-writer-locks')
-    mkdirSync(locks, { recursive: true })
-    writeFileSync(join(locks, `${B}.lock`), '')
-    const fd = openSync(join(locks, `${C}.lock`), 'a')
-    try {
-      const running = await PROGRAM.active('codex')
-      expect(running.known).toBe(true)
-      if (running.known) {
-        expect(running.active.map((one) => one.session)).toEqual([C])
-        expect(running.active[0]).toMatchObject({ kind: 'interactive', pid: process.pid, cwd: dir, handle: null })
-      }
-    } finally {
-      closeSync(fd)
-      rmSync(locks, { recursive: true, force: true })
-    }
-    expect(await PROGRAM.active('codex')).toEqual({ known: true, active: [] })
+  test('a process seen on a conversation is said with the folder its record names', async () => {
+    const project = scratch('active')
+    writeRollout(A, project, [typed(T0)])
+    const tools = scratch('ps')
+    writeFileSync(join(tools, 'ps'), `#!/bin/sh\necho "  4242 /x/opencode --session ${A}"\n`)
+    chmodSync(join(tools, 'ps'), 0o755)
+    const running = await PROGRAM.active('/x/opencode', { ...process.env, KEHIKOT_OPENCODE_PS: join(tools, 'ps') })
+    expect(running).toEqual({ known: true, active: [{ session: A, kind: 'interactive', called: 'an OpenCode process', handle: null, pid: 4242, cwd: project, startedAt: null, name: '', state: null, status: null }] })
+    expect(await PROGRAM.active('/x/opencode', { ...process.env, KEHIKOT_OPENCODE_PS: '' })).toEqual({ known: false, why: 'failed' })
   })
 })
 
-/** A scratch folder holding an executable `name` that runs `body`. */
-function tool(dir: string, name: string, body: string): void {
+const tool = (dir: string, name: string, body: string) => {
   mkdirSync(dir, { recursive: true })
   writeFileSync(join(dir, name), `#!/bin/sh\n${body}\n`)
   chmodSync(join(dir, name), 0o755)
@@ -305,119 +309,78 @@ const executable = (file: string) => {
 }
 
 describe('finding it where an install lands', () => {
-  test('in ~/.local/bin, which a thin PATH leaves out', () => {
-    const home = scratch('home')
-    executable(join(home, '.local', 'bin', 'codex'))
-    const found = PROGRAM.find({ HOME: home, PATH: '/usr/bin:/bin', KEHIKOT_CODEX_TOOL_DIRS: '' })
-    expect(found.file).toBe(join(home, '.local', 'bin', 'codex'))
-    expect(found.usual[0]).toBe(join(home, '.local', 'bin'))
+  test('in ~/.opencode/bin, where the installer puts it and a thin PATH leaves out', () => {
+    const at = scratch('home')
+    executable(join(at, '.opencode', 'bin', 'opencode'))
+    expect(PROGRAM.find({ HOME: at, PATH: '/usr/bin:/bin', KEHIKOT_OPENCODE_TOOL_DIRS: '' }).file).toBe(join(at, '.opencode', 'bin', 'opencode'))
   })
 
   test('in the bin folder of npm’s own global prefix, as `npm prefix -g` says it', () => {
     const root = scratch('prefix')
     const prefix = join(root, 'custom-prefix')
     tool(join(root, 'tools'), 'npm', `[ "$1 $2" = "prefix -g" ] && echo ${prefix}`)
-    executable(join(prefix, 'bin', 'codex'))
-    const env = { HOME: root, PATH: join(root, 'tools'), KEHIKOT_CODEX_TOOL_DIRS: '' }
+    executable(join(prefix, 'bin', 'opencode'))
+    const env = { HOME: root, PATH: join(root, 'tools'), KEHIKOT_OPENCODE_TOOL_DIRS: '' }
     expect(npmPrefix(env)).toBe(prefix)
-    const found = PROGRAM.find(env)
-    expect(found.file).toBe(join(prefix, 'bin', 'codex'))
-    expect(found.usual).toContain(join(prefix, 'bin'))
-  })
-
-  test('npm that cannot say, or is not there, is no reason to fail', () => {
-    const root = scratch('nonpm')
-    expect(npmPrefix({ HOME: root, PATH: '/nonexistent', KEHIKOT_CODEX_TOOL_DIRS: '' })).toBeNull()
-    tool(join(root, 'tools'), 'npm', 'exit 1')
-    expect(PROGRAM.find({ HOME: root, PATH: join(root, 'tools'), KEHIKOT_CODEX_TOOL_DIRS: '' }).file).toBeNull()
+    expect(PROGRAM.find(env).file).toBe(join(prefix, 'bin', 'opencode'))
   })
 
   test('a binary that appears after the first look is found by the next one, without a restart', () => {
-    const home = scratch('later')
-    const env = { HOME: home, PATH: '/usr/bin:/bin', KEHIKOT_CODEX_TOOL_DIRS: '' }
+    const at = scratch('later')
+    const env = { HOME: at, PATH: '/usr/bin:/bin', KEHIKOT_OPENCODE_TOOL_DIRS: '' }
     expect(PROGRAM.find(env).file).toBeNull()
-    executable(join(home, '.local', 'bin', 'codex'))
-    expect(PROGRAM.find(env).file).toBe(join(home, '.local', 'bin', 'codex'))
+    executable(join(at, '.opencode', 'bin', 'opencode'))
+    expect(PROGRAM.find(env).file).toBe(join(at, '.opencode', 'bin', 'opencode'))
   })
 })
 
 describe('installing', () => {
-  test('without admin rights: into the home folder when there is no Homebrew', () => {
+  test('without admin rights: the vendor’s installer, told to leave the shell files alone, when there is no Homebrew', () => {
     const root = scratch('nobrew')
-    const env = { HOME: root, PATH: '/usr/bin:/bin', KEHIKOT_CODEX_TOOL_DIRS: '' }
+    const env = { HOME: root, PATH: '/usr/bin:/bin', KEHIKOT_OPENCODE_TOOL_DIRS: '' }
     expect(hasBrew(env)).toBe(false)
-    expect(PROGRAM.install(env)).toMatchObject({ line: 'npm install -g --prefix ~/.local @openai/codex', lands: '~/.local/bin', source: 'https://developers.openai.com/codex/cli' })
+    expect(PROGRAM.install(env)).toMatchObject({ line: CURL_LINE, lands: '~/.opencode/bin', source: 'https://opencode.ai/docs' })
+    expect(CURL_LINE).toContain('--no-modify-path')
   })
 
-  test('with Homebrew on PATH, or in a usual prefix, its cask', () => {
+  test('with Homebrew on PATH, or in a usual prefix, the project’s own tap', () => {
     const root = scratch('brew')
     tool(join(root, 'bin'), 'brew', 'exit 0')
-    expect(PROGRAM.install({ HOME: root, PATH: join(root, 'bin'), KEHIKOT_CODEX_TOOL_DIRS: '' }).line).toBe('brew install --cask codex')
+    expect(PROGRAM.install({ HOME: root, PATH: join(root, 'bin'), KEHIKOT_OPENCODE_TOOL_DIRS: '' }).line).toBe(BREW_LINE)
     const prefix = scratch('prefix-brew')
     tool(prefix, 'brew', 'exit 0')
-    expect(installFor({ HOME: root, PATH: '/usr/bin:/bin', KEHIKOT_CODEX_TOOL_DIRS: prefix }).line).toBe('brew install --cask codex')
+    expect(installFor({ HOME: root, PATH: '/usr/bin:/bin', KEHIKOT_OPENCODE_TOOL_DIRS: prefix }).line).toBe('brew install anomalyco/tap/opencode')
   })
 
-  test('never sudo, and never npm’s own configuration', () => {
-    for (const dirs of ['', '/nowhere']) {
-      const line = PROGRAM.install({ HOME, PATH: '/usr/bin:/bin', KEHIKOT_CODEX_TOOL_DIRS: dirs }).line
-      expect(line).not.toMatch(/sudo|npm config|\bset\b/)
-    }
+  test('never sudo', () => {
+    for (const dirs of ['', '/nowhere']) expect(PROGRAM.install({ HOME, PATH: '/usr/bin:/bin', KEHIKOT_OPENCODE_TOOL_DIRS: dirs }).line).not.toMatch(/sudo/)
   })
 
-  test('is run with the places npm and brew live on its PATH', () => {
+  test('is run with the places curl and brew live on its PATH', () => {
     const env = PROGRAM.installEnvironment({ PATH: '/usr/bin' })
     expect(env.PATH).toContain('/opt/homebrew/bin')
     expect(env.PATH!.startsWith('/usr/bin')).toBe(true)
   })
 
   test('a stand-in can be named by whoever started the server', () => {
-    expect(PROGRAM.install({ KEHIKOT_CODEX_INSTALL_LINE: 'sh stand-in.sh' }).line).toBe('sh stand-in.sh')
+    expect(PROGRAM.install({ KEHIKOT_OPENCODE_INSTALL_LINE: 'sh stand-in.sh' }).line).toBe('sh stand-in.sh')
   })
 })
 
 describe('when the install did not finish', () => {
-  const EACCES = [
-    'npm error code EACCES',
-    'npm error syscall mkdir',
-    "npm error path /usr/local/lib/node_modules/@openai",
-    "npm error errno -13",
-    "npm error Error: EACCES: permission denied, mkdir '/usr/local/lib/node_modules/@openai'",
-    'npm error     at async mkdir (node:internal/fs/promises:857:10)',
-  ].join('\r\n')
-  const OLD_LINE = 'npm install -g @openai/codex'
-  const noBrew = { HOME, PATH: '/usr/bin:/bin', KEHIKOT_CODEX_TOOL_DIRS: '' }
+  const noBrew = { HOME, PATH: '/usr/bin:/bin', KEHIKOT_OPENCODE_TOOL_DIRS: '' }
 
-  test('EACCES is known by its code and by its words, through the terminal’s colours', () => {
-    expect(deniedWrite(EACCES)).toBe(true)
+  test('a refusal to write is known through the terminal’s colours, and said plainly', () => {
     expect(deniedWrite('\u001b[1mEACC\u001b[0mES')).toBe(true)
-    expect(deniedWrite('\u001b[31mnpm error\u001b[0m EACCES')).toBe(true)
     expect(deniedWrite('Error: permission denied, open')).toBe(true)
-    expect(deniedWrite('npm error 404 Not Found')).toBe(false)
-  })
-
-  test('is said plainly, with the home-folder command, and without npm’s trace', () => {
-    const said = PROGRAM.explain(EACCES, 243, OLD_LINE, noBrew)
-    expect(said).toBe("npm can't write to /usr/local without admin rights. Install into your home folder instead: npm install -g --prefix ~/.local @openai/codex")
-    expect(said).not.toMatch(/node:internal|at async|errno/)
-  })
-
-  test('offers the Homebrew one instead when Homebrew is here', () => {
-    const root = scratch('explain-brew')
-    tool(join(root, 'bin'), 'brew', 'exit 0')
-    const said = PROGRAM.explain(EACCES, 243, OLD_LINE, { HOME: root, PATH: join(root, 'bin'), KEHIKOT_CODEX_TOOL_DIRS: '' })
-    expect(said).toContain('Install into your home folder instead: brew install --cask codex')
-  })
-
-  test('a refusal of the home-folder command itself does not send the person round again', () => {
-    const said = PROGRAM.explain("EACCES: permission denied, mkdir '/Users/x/.local/lib/node_modules/@openai'", 243, 'npm install -g --prefix ~/.local @openai/codex', noBrew)
-    expect(said).toContain('/Users/x/.local')
-    expect(said).not.toContain('Install into your home folder instead')
+    expect(deniedWrite('404 Not Found')).toBe(false)
+    expect(PROGRAM.explain('mkdir: /Users/x/.opencode: Permission denied', 1, CURL_LINE, noBrew)).toBe("The installer can't write where it was asked to. Check that the folder is yours, or install OpenCode another way: https://opencode.ai/docs")
   })
 
   test('other endings are said in a sentence with the next step', () => {
     expect(PROGRAM.explain('', 0, 'x', noBrew)).toContain('See the log')
-    expect(PROGRAM.explain('sh: npm: command not found', 127, OLD_LINE, noBrew)).toContain('npm was not found')
-    expect(PROGRAM.explain('boom', 7, 'brew install --cask codex', noBrew)).toBe('The installer exited with 7. See the log, or run brew install --cask codex in a terminal.')
+    expect(PROGRAM.explain('sh: brew: command not found', 127, BREW_LINE, noBrew)).toContain('Homebrew was not found')
+    expect(PROGRAM.explain('curl: (6) Could not resolve host: opencode.ai', 6, CURL_LINE, noBrew)).toContain('could not reach the internet')
+    expect(PROGRAM.explain('boom', 7, BREW_LINE, noBrew)).toBe('The installer exited with 7. See the log, or run brew install anomalyco/tap/opencode in a terminal.')
   })
 })

@@ -12,7 +12,7 @@ describe('the manifest', () => {
   test('names this module by an id the protocol accepts, keeping its data under its own folder', () => {
     expect(MODULE_ID.test(ID)).toBe(true)
     expect(MANIFEST.id).toBe(ID)
-    expect(moduleFolder(ID)).toBe('codex')
+    expect(moduleFolder(ID)).toBe('opencode')
   })
 
   test('says a restart ends the sessions it holds, so a host never restarts it on its own account (protocol 2.33.0)', () => {
@@ -65,7 +65,7 @@ describe('the manifest', () => {
     expect(major! > 2 || (major === 2 && minor! >= 21)).toBe(true)
   })
 
-  test('declares $kehikot-here, and that it installs its skills itself, where Codex reads them (protocol 2.23.0)', () => {
+  test('declares /kehikot-here, and that it installs its skills itself, where OpenCode reads them (protocol 2.23.0)', () => {
     /* The manifest as served: a host shows the skill and, told installsSkills, installs none of it for Claude Code. */
     const served = manifestSchema.parse(SERVED)
     expect(served.declares.skills?.map((one) => one.name)).toEqual(['kehikot-here'])
@@ -77,11 +77,11 @@ describe('the manifest', () => {
 
   test('has an icon a host draws, and no other module’s', () => {
     expect(isModuleIcon(MANIFEST.icon)).toBe(true)
-    expect(MANIFEST.icon).toBe('lucide:bot')
+    expect(MANIFEST.icon).toBe('lucide:message-square-code')
   })
 
   test('says what its MCP door is to be registered as, in a shape the protocol takes', () => {
-    expect(MANIFEST.mcp?.as).toBe('kehikko-codex')
+    expect(MANIFEST.mcp?.as).toBe('kehikko-opencode')
     expect(DOOR_NAME.test(MANIFEST.mcp?.as ?? '')).toBe(true)
   })
 })

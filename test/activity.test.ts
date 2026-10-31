@@ -18,7 +18,7 @@ function host(extra: Record<string, unknown> = {}) {
   }
   const said: { type: string; id: string; method?: string; params?: { items: unknown[] } }[] = []
   const from = { postMessage: (m: never) => void said.push(m) }
-  const live = connect('kehikot.codex', {}, { source })
+  const live = connect('kehikot.opencode', {}, { source })
   live.listen()
   for (const fn of listeners) {
     fn({ data: { type: MESSAGE.HELLO, protocol: PROTOCOL, session: 's', context: { epic: null, project: null, theme: 'light' }, ...extra }, origin: 'null', source: from } as unknown as MessageEvent)
@@ -38,7 +38,7 @@ describe('the list as the protocol takes it', () => {
     ])
     expect(activityItemsSchema.safeParse(rows).success).toBe(true)
     expect(rows.map((row) => row.state)).toEqual(['attention', 'working', 'done'])
-    expect(rows[2]).toMatchObject({ label: 'Codex session', detail: 'turn ended; 2 background tasks still running' })
+    expect(rows[2]).toMatchObject({ label: 'OpenCode session', detail: 'turn ended; 2 background tasks still running' })
     expect(rows[2]).not.toHaveProperty('place')
   })
 

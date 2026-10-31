@@ -4,7 +4,7 @@
  * ## Why a burst of sizes is somebody's text twice
  *
  * Every size the pty is told is a SIGWINCH, and a program that draws its own
- * screen redraws on every one. Codex — the program this module holds —
+ * screen redraws on every one. OpenCode — the program this module holds —
  * reprints its conversation for the new width, and what it printed for the
  * old width stays in the scrollback above. One resize leaves one copy; that is the program's, and a terminal
  * window dragged by hand does the same.

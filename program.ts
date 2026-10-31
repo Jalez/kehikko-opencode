@@ -1,7 +1,7 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { createHash, randomUUID } from 'node:crypto'
-import { accessSync, constants, realpathSync, statSync } from 'node:fs'
-import { open, readdir, stat } from 'node:fs/promises'
+import { randomBytes } from 'node:crypto'
+import { accessSync, constants, readFileSync, realpathSync, statSync } from 'node:fs'
+import { stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { delimiter, dirname, join } from 'node:path'
 
@@ -10,47 +10,52 @@ import { personEnv } from 'kehikot-module-protocol/serve'
 /**
  * The program this module opens, and everything that is specific to it.
  *
- * ## This is the only file that knows it is Codex
+ * ## This is the only file that knows it is OpenCode
  *
  * The rest of the module is a terminal that holds one session per place: a pty, a record of
  * which session belongs where, a list to choose from. Everything that knows the program is the
- * Codex CLI is here, as one value of one interface — `Program`, the same interface the Claude
- * module answers for Claude Code.
+ * OpenCode CLI (`opencode`, anomalyco/opencode, formerly sst/opencode) is here, as one value of one
+ * interface — `Program`, the same interface the Claude and Codex modules answer for theirs.
  *
  * What a program has to answer, and it is the whole list:
  *
  *  1. **Where is the binary?** (`find`) The desktop app starts modules with a thin PATH.
  *  2. **Can this copy do what is asked of it?** (`supports`)
  *  3. **How is a new session started, and how is one resumed?** (`fresh`, `resume`) As argv.
- *  4. **Does a session exist yet, and under which id?** (`settled`) Codex chooses a new
- *     session's id itself and writes nothing for it until the person first says something; the
- *     session's own hooks then name it (`learnSession`).
- *  5. **Which sessions does it hold for a folder?** (`sessions`)
+ *  4. **Does a session exist yet, and under which id?** (`settled`) OpenCode chooses a new
+ *     session's id itself (`ses_…`) and creates it at the first prompt; the session's own plugin
+ *     then names it (`learnSession`).
+ *  5. **Which sessions does it hold for a folder?** (`sessions`) Read from its database.
  *  6. **How is it installed?** (`install`)
- *  7. **Can it say what it is doing?** (`hookArgs`, `signal`) Codex's own lifecycle hooks.
- *  8. **Is a session already open in another process?** (`active`) Codex holds a lock file per
- *     conversation while a process writes it; who holds it is asked of `lsof`.
+ *  7. **Can it say what it is doing?** (`signal`) Through the plugin this module gives each
+ *     session for its one process (`plugin/opencode/kehikot.js`), which hears OpenCode's own bus.
+ *  8. **Is a session already open in another process?** (`active`) OpenCode holds no lock per
+ *     session; a process started on one (`--session <id>`) says so in its arguments.
  *
  * ## What is never here
  *
  * A prompt of anybody's but the person's: the person types. The one sentence this module ever
  * sends is its own, fixed, to a conversation a restart cut off mid-turn, when the person opens it
  * again, behind a setting they can turn off (`RESUME_LINE` in live.ts). And no flag that widens
- * what the program may do: nothing about the sandbox, approvals, the model or features. A session
- * opened here has exactly the permissions `codex` would have in any terminal in that folder.
+ * what the program may do: no `--auto` (which approves every permission not denied), nothing that
+ * lowers a permission the person set. A session opened here can do exactly what `opencode` would
+ * do in any terminal in that folder, plus the doors and skills of its kehikko.
  *
  * ## Every command line this module ever runs, and it is the whole list
  *
- *     codex --help                                     once per binary: which flags and commands it has
- *     codex features list                              once per binary: whether its hooks are on
- *     codex [-c <hook>…] [-c <door>…]                  a new session
- *     codex resume <uuid> [<line>] [-c <hook>…] [-c <door>…]   a session nothing else holds
- *     lsof -F pn <lock files>                          which process holds which conversation: reads
+ *     opencode --version                               once per binary: which release
+ *     opencode --help                                  once per binary: which options it has
+ *     opencode [--model <m>] [--agent <a>]             a new session (TUI, in the project's folder)
+ *     opencode --session <ses_…> [--model …] [--agent …]   a session nothing else holds
+ *     /usr/bin/sqlite3 -readonly -json <its db> <select>   the sessions of a folder: reads
+ *     /bin/ps -axo pid=,command=                       which processes were started on which session: reads
  *
- * `-c` is Codex's own per-run override of its configuration (`config.toml` is never written):
- * `hooks.<Event>` are this module's hooks, `hooks.state` the trust of exactly those hooks, and
- * `mcp_servers.<name>` the Kehikot doors of the place. Measured on 0.164.0 with a scratch
- * `CODEX_HOME` and a stand-in for the model API.
+ * Everything per session rides on ONE environment variable, `OPENCODE_CONFIG_DIR`, which OpenCode
+ * reads as one more configuration folder after the person's own (anomalyco/opencode
+ * `config/paths.ts`, read at v1.19.5): its `opencode.json` (the doors, as `mcp`), its `plugins/`
+ * (this module's plugin), its `skills/` (the kehikko's skills). Nothing of the person's
+ * configuration is written. Read against the source at v1.19.5 and its docs at opencode.ai; the
+ * tests run a stand-in, never a model provider.
  */
 
 export interface Found {
@@ -66,37 +71,38 @@ export interface Able {
   ok: boolean
   /** What this copy lacks, for the sentence on screen. Null when ok, or when nothing could be told. */
   missing: string | null
-  /** Whether this copy runs hooks given for one process (`-c hooks.*`, trusted per run): how a session says what it is doing. */
+  /** Whether this copy loads the plugin from a per-run folder: how a session says what it is doing. */
   tells: boolean
-  /** Whether this copy can be asked which process holds a conversation (its lock files). */
+  /** Whether this copy can be asked which process was started on which session (its arguments). */
   lists: boolean
-  /** Whether this copy takes a display name for a session. Codex does not, at start. */
+  /** Whether this copy takes a display name for a session. OpenCode does not, at start. */
   names?: boolean
-  /** Whether this copy takes MCP servers for one process (`-c mcp_servers.*`): how a session is given its place. */
+  /** Whether this copy takes a configuration folder for one process (`OPENCODE_CONFIG_DIR`): how a session is given its place. */
   configures?: boolean
-  /** Whether a session can be given this module's skills: they are announced through its hooks, so with `tells`. */
+  /** Whether a session can be given this module's skills (`skills/` in that folder). */
   plugins?: boolean
-  /** Whether this copy runs a session in the background that outlives this process. Codex does not with per-run configuration (see `fresh`). */
+  /** Whether this copy runs a session in the background that outlives this process. Not as this module starts it. */
   backgrounds?: boolean
+  /** Whether the plugin may give OpenCode a tool with a JSON-schema argument (`kehikot_here`): 1.14.49 and later. */
+  tools?: boolean
+  /** The release, as `--version` said it; null when it could not be read. */
+  version?: string | null
 }
 
-/** A session started or woken in the background, or why not. Codex never is: the type stays for the interface. */
+/** A session started or woken in the background, or why not. OpenCode never is: the type stays for the interface. */
 export type Backgrounded = { ok: true; handle: string; active: Active } | { ok: false; why: string }
 
 /**
- * One conversation a process holds now, as its lock file says.
- *
- * Codex 0.164.0 keeps `$CODEX_HOME/thread-writer-locks/<session id>.lock` open in the process that
- * writes the conversation (measured: one lock file per running conversation, held by the `codex`
- * process; a second `codex resume <id>` shows "This conversation is open in another app" and
- * offers to retry or fork). Who holds it is asked of `lsof`.
+ * One conversation a process holds now, as far as can be told: an `opencode` process started with
+ * `--session <id>` (or `-s`). A process started with no id and on a conversation since is not
+ * seen; OpenCode keeps no lock per conversation to ask (it writes one database for all of them).
  */
 export interface Active {
   session: string
-  /** Always `interactive` for Codex: nothing it runs can be attached to. */
+  /** Always `interactive` for OpenCode as found: nothing it runs here can be attached to. */
   kind: 'background' | 'interactive' | 'other'
   called: string
-  /** What `attach` would take. Null: Codex has no attach. */
+  /** What `attach` would take. Null. */
   handle: string | null
   pid: number | null
   cwd: string
@@ -117,15 +123,17 @@ export const STATES: readonly State[] = ['working', 'needs-you', 'finished']
 /** One session as the program's own records describe it. */
 export interface Recorded {
   id: string
-  /** What the session is called: its first prompt, one line, cut short. `''` when nothing readable was found. */
+  /** What the session is called: its title, or its first prompt while it has OpenCode's default title. `''` when nothing readable was found. */
   label: string
   firstPrompt?: string
   lastPrompt?: string
   prs?: { number: number; url: string }[]
-  /** The sessions this conversation was carried on in. Codex resumes a conversation under its own id, so none. */
+  /** The sessions this conversation was carried on in. OpenCode resumes a conversation under its own id, so none. */
   next?: string[]
-  /** When the record last grew, in milliseconds. */
+  /** When the record last changed, in milliseconds. */
   lastActive: number
+  /** What the conversation cost, as OpenCode summed it (its `session.cost`); 0 for nothing priced. */
+  cost?: number
 }
 
 export interface Install {
@@ -133,14 +141,6 @@ export interface Install {
   lands: string
   source: string
   checked: string
-}
-
-/** One group of hook handlers for one Codex event: every command runs, in order. */
-export interface HookGroup {
-  event: HookEvent
-  /** A regex Codex matches against the tool name (or `source` for SessionStart). Absent: every one. */
-  matcher?: string
-  commands: { command: string; timeout: number }[]
 }
 
 export interface Program {
@@ -155,22 +155,20 @@ export interface Program {
   settled(projectPath: string, id: string, since: number): Promise<string | null>
   sessions(projectPath: string, also?: readonly string[]): Promise<Recorded[]>
   install(env?: NodeJS.ProcessEnv): Install
-  /** The environment the installer runs in: the one given, with the places `npm` and `brew` live added to PATH. */
+  /** The environment the installer runs in: the one given, with the places `curl` and `brew` live added to PATH. */
   installEnvironment(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   /** What to tell the person when the installer ended without a binary: plain words and the next step. */
   explain(output: string, exitCode: number, ran: string, env?: NodeJS.ProcessEnv): string
   environment(env?: NodeJS.ProcessEnv): NodeJS.ProcessEnv
-  /** The `-c` arguments that give one process these hooks, and trust exactly them. */
-  hookArgs(groups: readonly HookGroup[]): string[]
   signal(event: string): State | null
   active(file: string, env?: NodeJS.ProcessEnv): Promise<Running>
 }
 
 /* ------------------------------------------------------------------------ *
- * Codex
+ * OpenCode
  * ------------------------------------------------------------------------ */
 
-const BINARY = 'codex'
+const BINARY = 'opencode'
 
 /** The home folder as the environment names it, which is what the program itself goes by. */
 export function home(env: NodeJS.ProcessEnv = process.env): string {
@@ -178,44 +176,55 @@ export function home(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * Where Codex keeps what it knows: `~/.codex`, or wherever `CODEX_HOME` says — the variable the
- * program itself honours, which is also how a test points this at a scratch folder. Read, never
- * written: the conversations (`sessions/`), their lock files, and nothing else.
+ * Where OpenCode keeps its data: `$XDG_DATA_HOME/opencode`, else `~/.local/share/opencode`
+ * (`xdg-basedir`, as OpenCode's `core/global.ts` uses it). Read, never written: its database, and
+ * nothing else. `auth.json` beside it holds the person's provider keys and is never opened.
  */
-export function codexHome(env: NodeJS.ProcessEnv = process.env): string {
-  return env.CODEX_HOME || join(home(env), '.codex')
+export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
+  const xdg = env.XDG_DATA_HOME && env.XDG_DATA_HOME.startsWith('/') ? env.XDG_DATA_HOME : join(home(env), '.local', 'share')
+  return join(xdg, 'opencode')
 }
 
 /**
- * The places an install usually lands that a thin PATH leaves out: npm's and Homebrew's global
- * bins, Bun's, and the CLI the Codex desktop app carries inside itself.
+ * OpenCode's database: `OPENCODE_DB` when it names one (absolute, or a name in the data folder —
+ * the variable the program honours), else `opencode.db` in the data folder (a release from the
+ * `latest`, `beta` or `prod` channel; a development build writes `opencode-<channel>.db`).
+ */
+export function databaseFile(env: NodeJS.ProcessEnv = process.env): string {
+  const said = env.OPENCODE_DB
+  if (said && said !== ':memory:') return said.startsWith('/') ? said : join(dataDir(env), said)
+  return join(dataDir(env), 'opencode.db')
+}
+
+/**
+ * The places an install usually lands that a thin PATH leaves out: the installer's own folder
+ * (`~/.opencode/bin`), `~/.local/bin`, Homebrew's, npm's and Bun's global bins.
  */
 function usualDirs(env: NodeJS.ProcessEnv): string[] {
   const at = home(env)
   return [
+    join(at, '.opencode', 'bin'),
     join(at, '.local', 'bin'),
     '/opt/homebrew/bin',
     '/usr/local/bin',
     join(at, '.npm-global', 'bin'),
     join(at, '.bun', 'bin'),
-    '/Applications/Codex.app/Contents/Resources',
-    join(at, 'Applications', 'Codex.app', 'Contents', 'Resources'),
   ]
 }
 
-/** PATH with the usual places added after it, so `npm` and `brew` are found under the desktop app's thin one. */
+/** PATH with the usual places added after it, so `curl`, `bash` and `brew` are found under the desktop app's thin one. */
 function installPath(env: NodeJS.ProcessEnv): string {
   const dirs = [...(env.PATH ?? '').split(delimiter).filter(Boolean), ...toolDirs(env), '/usr/bin', '/bin']
   return [...new Set(dirs)].join(delimiter)
 }
 
 /**
- * Where `brew` and `npm` usually are: Homebrew's two prefixes. `KEHIKOT_CODEX_TOOL_DIRS` (a
+ * Where `brew` and `npm` usually are: Homebrew's two prefixes. `KEHIKOT_OPENCODE_TOOL_DIRS` (a
  * PATH-style list, empty for none) replaces them, which is how a test keeps this machine's real
  * Homebrew and npm out of what it checks.
  */
 function toolDirs(env: NodeJS.ProcessEnv): string[] {
-  const said = env.KEHIKOT_CODEX_TOOL_DIRS
+  const said = env.KEHIKOT_OPENCODE_TOOL_DIRS
   return said === undefined ? ['/opt/homebrew/bin', '/usr/local/bin'] : said.split(delimiter).filter(Boolean)
 }
 
@@ -229,21 +238,15 @@ function runnable(file: string): boolean {
   }
 }
 
-/** The Rust binary an npm install of `@openai/codex` carries for this machine (the triples of `codex.js`). */
-const TRIPLES: Record<string, string> = {
-  'darwin-arm64': 'aarch64-apple-darwin',
-  'darwin-x64': 'x86_64-apple-darwin',
-  'linux-arm64': 'aarch64-unknown-linux-musl',
-  'linux-x64': 'x86_64-unknown-linux-musl',
-}
-
 /**
  * The native binary behind an npm launcher, when `file` is one.
  *
- * npm installs `codex` as a link to `@openai/codex/bin/codex.js`, a Node script (`#!/usr/bin/env
- * node`) that only finds and runs the Rust binary in `@openai/codex-<platform>`. Under the
- * desktop app's thin PATH there may be no `node` to run it with, so the binary is run directly:
- * the same program, without the hop. Anything else is returned as it was.
+ * npm installs `opencode` (package `opencode-ai`) as a link to `opencode-ai/bin/opencode`, a Node
+ * script (`#!/usr/bin/env node`) that only finds and runs the native binary of
+ * `opencode-<platform>-<arch>` (and keeps a copy beside itself, `bin/.opencode`). Under the desktop
+ * app's thin PATH there may be no `node` to run it with, so the binary is run directly: the same
+ * program, without the hop — and the process this module holds is OpenCode's own. Anything else is
+ * returned as it was.
  */
 export function nativeOf(file: string): string {
   let real = file
@@ -252,14 +255,24 @@ export function nativeOf(file: string): string {
   } catch {
     return file
   }
-  if (!real.endsWith(join('@openai', 'codex', 'bin', 'codex.js'))) return file
-  const key = `${process.platform}-${process.arch}`
-  const triple = TRIPLES[key]
-  if (!triple) return file
+  if (!real.endsWith(join('opencode-ai', 'bin', 'opencode'))) return file
+  let head = ''
+  try {
+    head = readFileSync(real, { encoding: 'utf8', flag: 'r' }).slice(0, 64)
+  } catch {
+    return file
+  }
+  if (!head.startsWith('#!')) return file
+  const cached = join(dirname(real), '.opencode')
+  if (runnable(cached)) return cached
+  const platform = process.platform === 'win32' ? 'windows' : process.platform
+  const base = `opencode-${platform}-${process.arch}`
   const pkg = dirname(dirname(real))
-  for (const base of [join(pkg, 'node_modules'), dirname(dirname(pkg))]) {
-    const candidate = join(base, '@openai', `codex-${key}`, 'vendor', triple, 'bin', BINARY)
-    if (runnable(candidate)) return candidate
+  for (const modules of [join(pkg, 'node_modules'), dirname(pkg)]) {
+    for (const name of [base, `${base}-baseline`]) {
+      const candidate = join(modules, name, 'bin', BINARY)
+      if (runnable(candidate)) return candidate
+    }
   }
   return file
 }
@@ -299,8 +312,7 @@ function find(env: NodeJS.ProcessEnv = process.env): Found {
     const file = join(dir, BINARY)
     if (runnable(file)) return { file: nativeOf(file), looked, usual }
   }
-  /* Last, because it costs a process: where npm itself puts a global install, which is not
-     always a folder anyone listed (a prefix the person set, or a version manager's). */
+  /* Last, because it costs a process: where npm itself puts a global install. */
   const prefix = npmPrefix(env)
   if (prefix) {
     const dir = join(prefix, 'bin')
@@ -315,42 +327,42 @@ function find(env: NodeJS.ProcessEnv = process.env): Found {
 }
 
 /**
- * The command a resumed session needs, and the option every per-run setting rides on. Checked
- * against 0.164.0's `codex --help`, not written from memory:
+ * The option a resumed session needs, checked against `opencode --help` (yargs, v1.19.5), not
+ * written from memory:
  *
- *     resume   Resume a previous interactive session (picker by default; use --last to continue the most recent)
- *     -c, --config <key=value>   Override a configuration value that would otherwise be loaded from `~/.codex/config.toml`. …
+ *     -s, --session   session id to continue
  */
-const NEEDS: readonly { said: string; test: RegExp }[] = [
-  { said: 'resume', test: /^\s*resume\b/m },
-  { said: '--config', test: /--config\b/ },
-]
+const NEEDS: readonly { said: string; test: RegExp }[] = [{ said: '--session', test: /--session\b/ }]
+
+/** The release a version line names: `1.19.5` out of `1.19.5` or `opencode 1.19.5`. */
+export function versionOf(text: string): [number, number, number] | null {
+  const said = /(\d+)\.(\d+)\.(\d+)/.exec(text)
+  return said ? [Number(said[1]), Number(said[2]), Number(said[3])] : null
+}
+
+const atLeast = (v: [number, number, number], floor: [number, number, number]): boolean => {
+  for (let i = 0; i < 3; i += 1) if (v[i] !== floor[i]) return v[i]! > floor[i]!
+  return true
+}
 
 /**
- * Whether its hooks run: `codex features list` prints one line per feature, `hooks  stable  true`
- * on 0.164.0. A copy that cannot say, or says they are off, is started without them and its
- * sessions have no state.
+ * The release from which a per-run folder carries everything a session is given: `plugins/`,
+ * `skills/` and `opencode.json` in `OPENCODE_CONFIG_DIR` (all read by 1.x). An older copy is
+ * started as it would be in a terminal, with no doors, skills or state.
  */
-const HOOKS_ON = /^hooks\s+.*\btrue\s*$/m
-
-/**
- * Hook trust as a per-run setting: Codex 0.164.0 runs a hook from a non-managed source only when
- * `hooks.state."<key>".trusted_hash` matches its hash, and reads that state from the session's own
- * `-c` layer as well as the person's `config.toml` (`hook_states_from_stack`). A copy whose help
- * does not mention hook trust predates that and is not given hooks.
- */
-const TRUSTS = /hook[- ]trust/i
+const CONFIG_DIR_FROM: [number, number, number] = [1, 0, 0]
+/** Plugin tools whose arguments are plain JSON Schema (`legacyJsonSchema`), from 1.14.49 (#27451). */
+const TOOLS_FROM: [number, number, number] = [1, 14, 49]
 
 const able = new Map<string, Able>()
 
 /**
- * What the program prints for a command that only answers, read through a real pipe, whole (the
- * Claude module found Claude Code's help cut short when read directly; a pipe costs nothing).
+ * What the program prints for a command that only answers, read through a real pipe, whole.
  * Standard input closed; `''` for anything that went wrong.
  */
 function answered(file: string, args: readonly string[], env?: NodeJS.ProcessEnv, more: { cwd?: string; timeout?: number } = {}): Promise<string> {
   return new Promise((done) => {
-    const child = execFile('/bin/sh', ['-c', '"$0" "$@" </dev/null | /bin/cat', file, ...args], { timeout: more.timeout ?? 8000, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}), ...(more.cwd ? { cwd: more.cwd } : {}) }, (error, stdout) =>
+    const child = execFile('/bin/sh', ['-c', '"$0" "$@" </dev/null 2>&1 | /bin/cat', file, ...args], { timeout: more.timeout ?? 8000, maxBuffer: 16 * 1024 * 1024, ...(env ? { env } : {}), ...(more.cwd ? { cwd: more.cwd } : {}) }, (error, stdout) =>
       done(error ? '' : String(stdout ?? '')),
     )
     child.on('error', () => done(''))
@@ -360,6 +372,7 @@ function answered(file: string, args: readonly string[], env?: NodeJS.ProcessEnv
 /**
  * Whether this copy has what is used, asked once per binary per build. A copy whose help cannot be
  * read at all is NOT called too old: nothing was learned, and nothing extra is passed either.
+ * `--version` and `--help` start no session and call no provider.
  */
 async function supports(file: string): Promise<Able> {
   let stamp = file
@@ -370,84 +383,85 @@ async function supports(file: string): Promise<Able> {
   }
   const known = able.get(stamp)
   if (known) return known
-  const help = await answered(file, ['--help'], environment())
-  let said: Able
-  if (!help) said = { ok: true, missing: null, tells: false, lists: false, names: false, configures: false, plugins: false, backgrounds: false }
+  const env = environment()
+  const [said, help] = await Promise.all([answered(file, ['--version'], env), answered(file, ['--help'], env)])
+  const version = versionOf(said)
+  let out: Able
+  if (!help && !version) out = { ok: true, missing: null, tells: false, lists: false, names: false, configures: false, plugins: false, backgrounds: false, tools: false, version: null }
   else {
-    const missing = NEEDS.find((one) => !one.test.test(help))?.said ?? null
-    const configures = /--config\b/.test(help)
-    const features = configures && TRUSTS.test(help) ? await answered(file, ['features', 'list'], environment()) : ''
-    const tells = configures && HOOKS_ON.test(features)
-    said = { ok: missing === null, missing, tells, lists: true, names: false, configures, plugins: tells, backgrounds: false }
-  }
-  able.set(stamp, said)
-  return said
-}
-
-/* ------------------------------------------------------------------------ *
- * Its records: $CODEX_HOME/sessions/YYYY/MM/DD/rollout-<time>-<id>.jsonl
- * ------------------------------------------------------------------------ */
-
-/** A session id as Codex spells one: a UUID (version 7 on 0.164.0). */
-const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-const ROLLOUT = /^rollout-.+-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/
-const DATED = /^\d{2,4}$/
-
-/** Where Codex files its conversations. */
-export function sessionsRoot(env: NodeJS.ProcessEnv = process.env): string {
-  return join(codexHome(env), 'sessions')
-}
-
-/** Kept between lists: each folder's names, by the folder's own time. */
-const listings = new Map<string, { mtimeMs: number; names: string[] }>()
-
-async function listed(dir: string): Promise<string[]> {
-  let mtimeMs = 0
-  try {
-    mtimeMs = (await stat(dir)).mtimeMs
-  } catch {
-    listings.delete(dir)
-    return []
-  }
-  const kept = listings.get(dir)
-  if (kept && kept.mtimeMs === mtimeMs) return kept.names
-  const names = await readdir(dir).catch(() => [] as string[])
-  listings.set(dir, { mtimeMs, names })
-  return names
-}
-
-/** Every rollout file under the sessions folder, by session id: three levels of dated folders. */
-export async function rollouts(env: NodeJS.ProcessEnv = process.env): Promise<Map<string, string>> {
-  const out = new Map<string, string>()
-  const root = sessionsRoot(env)
-  for (const year of (await listed(root)).filter((one) => DATED.test(one))) {
-    for (const month of (await listed(join(root, year))).filter((one) => DATED.test(one))) {
-      for (const day of (await listed(join(root, year, month))).filter((one) => DATED.test(one))) {
-        for (const name of await listed(join(root, year, month, day))) {
-          const id = ROLLOUT.exec(name)?.[1]
-          if (id) out.set(id, join(root, year, month, day, name))
-        }
-      }
+    const missing = help ? (NEEDS.find((one) => !one.test.test(help))?.said ?? null) : null
+    const configures = version !== null && atLeast(version, CONFIG_DIR_FROM)
+    out = {
+      ok: missing === null,
+      missing,
+      tells: configures,
+      lists: true,
+      names: false,
+      configures,
+      plugins: configures,
+      backgrounds: false,
+      tools: version !== null && atLeast(version, TOOLS_FROM),
+      version: version ? version.join('.') : null,
     }
   }
+  able.set(stamp, out)
   return out
 }
 
-/** Where Codex keeps the record of session `id`, or null when this computer has none. */
-export async function recordFile(_projectPath: string, id: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  if (!SESSION_ID.test(id)) return null
-  const file = (await rollouts(env)).get(id) ?? null
-  if (!file) return null
-  try {
-    return (await stat(file)).isFile() ? file : null
-  } catch {
-    return null
-  }
+/* ------------------------------------------------------------------------ *
+ * Its records: one SQLite database, read with the system's sqlite3
+ * ------------------------------------------------------------------------ */
+
+/**
+ * A session id as OpenCode spells one: `ses_` and its identifier (12 hex digits of time and 14 of
+ * base62, `core/id/id.ts`). Ids this module mints for a run before OpenCode names its session use
+ * the same spelling (`newId`), and never reach the database.
+ */
+const SESSION_ID = /^ses_[0-9A-Za-z]{10,64}$/
+
+/** The system's sqlite3, by its full path, so that nothing a project puts on PATH is run in its place. `KEHIKOT_OPENCODE_SQLITE` replaces it for a test. */
+function sqlite(env: NodeJS.ProcessEnv): string | null {
+  const said = env.KEHIKOT_OPENCODE_SQLITE
+  if (said !== undefined) return said && runnable(said) ? said : null
+  return ['/usr/bin/sqlite3', '/opt/homebrew/bin/sqlite3', '/usr/local/bin/sqlite3'].find(runnable) ?? null
 }
 
-/** Enough of the head of a record to hold its meta line (≈22 KB on 0.164.0, the instructions in it) and the first prompt. */
-const HEAD_BYTES = 512 * 1024
-const TAIL_BYTES = 512 * 1024
+/** A string as an SQL literal. */
+const literal = (text: string): string => `'${text.replace(/'/g, "''")}'`
+
+/** One row of the sessions query. */
+interface Row {
+  id: string
+  title: string | null
+  directory: string | null
+  updated: number | null
+  cost: number | null
+  first: string | null
+  last: string | null
+}
+
+/**
+ * Ask the database, read-only, and read its JSON answer: `[]` for no rows, null for a failure
+ * (no sqlite3, no database, a schema this reads differently). Never writes: `-readonly`.
+ */
+function ask(sql: string, env: NodeJS.ProcessEnv = process.env): Promise<Row[] | null> {
+  const bin = sqlite(env)
+  if (!bin) return Promise.resolve(null)
+  return new Promise((done) => {
+    execFile(bin, ['-readonly', '-json', databaseFile(env), sql], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => {
+      if (error) return done(null)
+      const text = String(stdout ?? '').trim()
+      if (!text) return done([])
+      try {
+        const rows = JSON.parse(text) as unknown
+        done(Array.isArray(rows) ? (rows as Row[]) : null)
+      } catch {
+        done(null)
+      }
+    })
+  })
+}
+
 export const LABEL_CHARS = 80
 const TITLE_CHARS = 120
 
@@ -456,104 +470,29 @@ const line = (text: unknown, most: number): string => {
   return first.length > most ? `${first.slice(0, most - 1).trimEnd()}…` : first
 }
 
-/** What the meta row (the first of a record) says: the folder, and whether it is a person's interactive conversation. */
-export interface Meta {
-  id: string
-  cwd: string
-  /** `cli` for the terminal UI, `exec` for `codex exec`, or what else Codex wrote. */
-  source: string
-  /** A subagent's thread is not a conversation of the person's. */
-  person: boolean
-}
-
-export function metaOf(head: string): Meta | null {
-  const end = head.indexOf('\n')
-  const first = end >= 0 ? head.slice(0, end) : head
-  let row: { type?: unknown; payload?: Record<string, unknown> }
-  try {
-    row = JSON.parse(first)
-  } catch {
-    return null
-  }
-  if (row.type !== 'session_meta' || !row.payload) return null
-  const p = row.payload
-  const id = typeof p.id === 'string' ? p.id : typeof p.session_id === 'string' ? p.session_id : ''
-  if (!SESSION_ID.test(id) || typeof p.cwd !== 'string') return null
-  const source = typeof p.source === 'string' ? p.source : typeof p.source === 'object' && p.source !== null ? 'subagent' : ''
-  const person = source !== 'subagent' && (p.thread_source === undefined || p.thread_source === 'user')
-  return { id, cwd: p.cwd, source, person }
-}
+/** OpenCode's own title for a session nobody named yet (`isDefaultTitle` in session.ts). */
+export const isDefaultTitle = (title: string): boolean => /^(New session|Child session) - \d{4}-\d{2}-\d{2}T/.test(title)
 
 /**
- * The things a person said in a record, as Codex itself noted them: `event_msg` rows of kind
- * `item_completed` whose item is a `UserMessage` (measured on 0.164.0: its text is exactly what
- * was typed; the environment and the instructions Codex adds are other rows). Of the head, the
- * first; of the tail, the last. This is the ONLY content of a transcript read for a label.
+ * The first and last thing a person typed in a session, as text parts of its user messages that
+ * OpenCode did not add itself (`synthetic`, which is also how this module's notes are added): the
+ * ONLY content of a conversation read, for a label.
  */
-export function promptsOf(text: string): string[] {
-  const out: string[] = []
-  for (const raw of text.split('\n')) {
-    if (!raw.includes('"UserMessage"')) continue
-    let row: { type?: unknown; payload?: { type?: unknown; item?: { type?: unknown; content?: unknown } } }
-    try {
-      row = JSON.parse(raw.trim())
-    } catch {
-      continue
-    }
-    if (row.type !== 'event_msg' || row.payload?.type !== 'item_completed' || row.payload.item?.type !== 'UserMessage') continue
-    const content = row.payload.item.content
-    const said = Array.isArray(content) ? content.map((part: unknown) => (typeof part === 'object' && part !== null && (part as { type?: unknown }).type === 'text' ? String((part as { text?: unknown }).text ?? '') : '')).join('\n') : ''
-    if (said.trim()) out.push(said)
-  }
-  return out
+const PROMPT = (session: string, order: 'asc' | 'desc') =>
+  `(select json_extract(p.data,'$.text') from message m join part p on p.message_id = m.id where m.session_id = ${session} and json_extract(m.data,'$.role') = 'user' and json_extract(p.data,'$.type') = 'text' and coalesce(json_extract(p.data,'$.synthetic'),0) = 0 order by m.time_created ${order}, p.id ${order} limit 1)`
+
+/** The sessions query: a project's top-level, unarchived sessions, and any named. */
+export function sessionsQuery(folders: readonly string[], also: readonly string[]): string {
+  const ids = also.filter((id) => SESSION_ID.test(id))
+  const where = [
+    folders.length ? `(s.parent_id is null and s.time_archived is null and s.directory in (${folders.map(literal).join(',')}))` : '',
+    ids.length ? `s.id in (${ids.map(literal).join(',')})` : '',
+  ].filter(Boolean)
+  if (!where.length) return 'select 1 where 0'
+  return `select s.id as id, s.title as title, s.directory as directory, s.time_updated as updated, s.cost as cost, ${PROMPT('s.id', 'asc')} as first, ${PROMPT('s.id', 'desc')} as last from session s where ${where.join(' or ')} order by s.time_updated desc limit 500`
 }
 
-/** The first line of the first thing a person said. */
-export function firstPrompt(head: string): string {
-  const first = promptsOf(head)[0]
-  return first ? line(first, LABEL_CHARS) : ''
-}
-
-const described = new Map<string, { stamp: string; meta: Meta | null; first: string; last: string }>()
-
-async function describe(file: string): Promise<{ meta: Meta | null; first: string; last: string; lastActive: number } | null> {
-  let info: { size: number; mtimeMs: number }
-  try {
-    info = await stat(file)
-  } catch {
-    return null
-  }
-  const stamp = `${info.size}@${info.mtimeMs}`
-  const known = described.get(file)
-  if (known?.stamp === stamp) return { ...known, lastActive: info.mtimeMs }
-  let head = ''
-  let tail = ''
-  try {
-    const handle = await open(file, 'r')
-    try {
-      const buffer = Buffer.alloc(Math.min(HEAD_BYTES, info.size))
-      const got = await handle.read(buffer, 0, buffer.length, 0)
-      head = buffer.subarray(0, got.bytesRead).toString('utf8')
-      const from = Math.max(0, info.size - TAIL_BYTES)
-      const end = Buffer.alloc(info.size - from)
-      const read = await handle.read(end, 0, end.length, from)
-      tail = end.subarray(0, read.bytesRead).toString('utf8')
-    } finally {
-      await handle.close()
-    }
-  } catch {
-    return null
-  }
-  const meta = known?.meta ?? metaOf(head)
-  const first = known?.first || firstPrompt(head)
-  const lastSaid = promptsOf(tail).at(-1)
-  const said = { stamp, meta, first, last: lastSaid ? line(lastSaid, TITLE_CHARS) : (known?.last ?? '') }
-  described.set(file, said)
-  while (described.size > 2048) described.delete(described.keys().next().value!)
-  return { ...said, lastActive: info.mtimeMs }
-}
-
-/** A folder as the program would name it: Codex writes the path it finds itself in (`/tmp` is `/private/tmp`). */
+/** A folder as the program would name it: OpenCode writes the path it finds itself in (`/tmp` is `/private/tmp`). */
 function spellings(path: string): Set<string> {
   const out = new Set([path])
   try {
@@ -564,29 +503,65 @@ function spellings(path: string): Set<string> {
   return out
 }
 
-async function sessions(projectPath: string, also: readonly string[] = []): Promise<Recorded[]> {
-  const folders = spellings(projectPath)
-  const wanted = new Set(also.filter((id) => SESSION_ID.test(id)))
-  const found: Recorded[] = []
-  for (const [id, file] of await rollouts()) {
-    const said = await describe(file)
-    if (!said?.meta) continue
-    const here = folders.has(said.meta.cwd) || [...spellings(said.meta.cwd)].some((one) => folders.has(one))
-    /* A project's own record names it, whatever folder it ran in (a project whose folder was renamed). */
-    if (!wanted.has(id) && (!here || !said.meta.person || said.meta.source === 'exec')) continue
-    found.push({ id, label: said.first, firstPrompt: said.first, lastPrompt: said.last, prs: [], next: [], lastActive: said.lastActive })
+/** What was last read, by the query, kept while the database and its write-ahead log are unchanged. */
+const kept = new Map<string, { stamp: string; rows: Row[] }>()
+
+async function dbStamp(env: NodeJS.ProcessEnv): Promise<string> {
+  const db = databaseFile(env)
+  const parts: string[] = []
+  for (const file of [db, `${db}-wal`]) {
+    try {
+      const said = await stat(file)
+      parts.push(`${said.size}@${said.mtimeMs}`)
+    } catch {
+      parts.push('-')
+    }
   }
-  return found.sort((a, b) => b.lastActive - a.lastActive)
+  return parts.join('/')
 }
 
-/** What a recorded session ran in, from its meta row: what `$kehikot-here` takes as its folder. */
+async function rowsOf(sql: string, env: NodeJS.ProcessEnv = process.env): Promise<Row[] | null> {
+  const stamp = `${databaseFile(env)}#${await dbStamp(env)}`
+  const known = kept.get(sql)
+  if (known && known.stamp === stamp) return known.rows
+  const rows = await ask(sql, env)
+  if (rows === null) return null
+  kept.set(sql, { stamp, rows })
+  while (kept.size > 256) kept.delete(kept.keys().next().value!)
+  return rows
+}
+
+function recordedOf(row: Row): Recorded | null {
+  if (typeof row.id !== 'string' || !SESSION_ID.test(row.id)) return null
+  const title = typeof row.title === 'string' ? row.title : ''
+  const first = line(row.first, LABEL_CHARS)
+  const label = title && !isDefaultTitle(title) ? line(title, LABEL_CHARS) : first
+  return { id: row.id, label, firstPrompt: first, lastPrompt: line(row.last, TITLE_CHARS), prs: [], next: [], lastActive: typeof row.updated === 'number' ? row.updated : 0, cost: typeof row.cost === 'number' && Number.isFinite(row.cost) && row.cost >= 0 ? row.cost : 0 }
+}
+
+async function sessions(projectPath: string, also: readonly string[] = []): Promise<Recorded[]> {
+  const rows = await rowsOf(sessionsQuery([...spellings(projectPath)], also))
+  return (rows ?? []).flatMap((row) => recordedOf(row) ?? []).sort((a, b) => b.lastActive - a.lastActive)
+}
+
+/** The folder a recorded session ran in: what its record names. */
 export async function folderOfRecord(id: string, env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
-  const file = await recordFile('', id, env)
-  if (!file) return null
-  return (await describe(file))?.meta?.cwd ?? null
+  if (!SESSION_ID.test(id)) return null
+  const rows = await rowsOf(sessionsQuery([], [id]), env)
+  const dir = rows?.[0]?.directory
+  return typeof dir === 'string' && dir.startsWith('/') ? dir : null
 }
 
-/** Where a conversation is now, from an id it was once under. Codex keeps one id per conversation, so it is that id. */
+/**
+ * No transcript file: OpenCode keeps a conversation in its database. What the Codex module reads
+ * a transcript for — the context meter, turns cut off — this module is told by the session's plugin
+ * instead (meter.ts, live.ts). Null always; kept for the shape the rest of the module shares.
+ */
+export async function recordFile(_projectPath: string, _id: string, _env: NodeJS.ProcessEnv = process.env): Promise<string | null> {
+  return null
+}
+
+/** Where a conversation is now, from an id it was once under. OpenCode keeps one id per conversation, so it is that id. */
 export function headOf(id: string, _held?: ReadonlyMap<string, Recorded>, _live?: ReadonlySet<string>): string {
   return id
 }
@@ -598,17 +573,16 @@ export function sessionName(words: readonly (string | null | undefined)[]): stri
 }
 
 /* ------------------------------------------------------------------------ *
- * A new session's id, which Codex chooses
+ * A new session's id, which OpenCode chooses
  * ------------------------------------------------------------------------ */
 
 /**
- * The id Codex gave each new session this module started, by the id this module opened it under.
+ * The id OpenCode gave each new session this module started, by the id this module opened it under.
  *
- * Codex takes no session id on its command line and writes nothing for a new session until the
- * person first says something (measured on 0.164.0: no rollout, no lock, until the first prompt).
- * Its hooks then name it — every hook is handed `session_id` — and `tell.sh` passes it here
- * (`learnSession`) beside the run's own id, which only this module and the session's environment
- * know. A `/clear` is a new session id in the same process, said the same way.
+ * OpenCode takes no session id for a new session and creates it when the person first sends
+ * something. The plugin then names it — every hook it hears carries `sessionID` — beside the run's
+ * own id, which only this module and the session's environment know (`learnSession`). `/new` (or
+ * `/clear`) and `/sessions` in the TUI are another session in the same process, said the same way.
  */
 const LEARNED = new Map<string, string>()
 
@@ -619,9 +593,16 @@ export function learnSession(opened: string, session: string): void {
   while (LEARNED.size > 1024) LEARNED.delete(LEARNED.keys().next().value!)
 }
 
-async function settled(projectPath: string, id: string): Promise<string | null> {
+/** Whether OpenCode's database holds a session by this id (any folder). */
+async function exists(id: string): Promise<boolean> {
+  if (!SESSION_ID.test(id)) return false
+  const rows = await rowsOf(sessionsQuery([], [id]))
+  return Boolean(rows?.some((row) => row.id === id))
+}
+
+async function settled(_projectPath: string, id: string): Promise<string | null> {
   const real = LEARNED.get(id) ?? id
-  return (await recordFile(projectPath, real)) ? real : null
+  return (await exists(real)) ? real : null
 }
 
 /* ------------------------------------------------------------------------ *
@@ -629,20 +610,24 @@ async function settled(projectPath: string, id: string): Promise<string | null> 
  * ------------------------------------------------------------------------ */
 
 /**
- * How the Codex CLI is installed, from the vendor's own page.
+ * How OpenCode is installed, from its own README (anomalyco/opencode, v1.19.5):
  *
- *   Source: https://developers.openai.com/codex/cli — "npm i -g @openai/codex" (or
- *   `brew install --cask codex`). Read 2026-10-26.
+ *     curl -fsSL https://opencode.ai/install | bash
+ *     brew install anomalyco/tap/opencode   # macOS and Linux (recommended, always up to date)
+ *     npm i -g opencode-ai@latest
  *
- * Never `npm install -g` as it is on that page: with Node from the official installer npm's global
- * prefix is `/usr/local`, owned by root, and the install fails with EACCES. Nothing here asks for
- * admin rights, uses `sudo` or changes npm's configuration (`installFor`).
+ * Read 2026-10-31. The installer script puts the binary in `~/.opencode/bin` and, unless told
+ * `--no-modify-path`, adds that folder to the person's shell files: this module tells it not to
+ * (`find` looks there anyway). Neither line asks for admin rights. That installer and the tap
+ * install OpenCode 1; OpenCode 2 (`@opencode/cli`, `anomalyco/tap/opencode-v2`) is a separate line
+ * this module was not checked against.
  *
  * It is DATA. Nothing in this file runs it: `live.ts` does, in a pty the person is looking at, and
- * only after a press in the page. Signing in is Codex's own first screen afterwards.
+ * only after a press in the page. Choosing a provider and signing in is OpenCode's own
+ * (`/connect`) afterwards; this module never reads or writes its keys.
  */
-const SOURCE = 'https://developers.openai.com/codex/cli'
-const CHECKED = '2026-10-26'
+const SOURCE = 'https://opencode.ai/docs'
+const CHECKED = '2026-10-31'
 
 /** Whether Homebrew is here: `brew` on PATH, or in either of Homebrew's usual prefixes. */
 export function hasBrew(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -650,25 +635,21 @@ export function hasBrew(env: NodeJS.ProcessEnv = process.env): boolean {
   return toolDirs(env).some((dir) => runnable(join(dir, 'brew')))
 }
 
-/** Homebrew's own cask, which needs no admin rights. */
-const BREW_LINE = 'brew install --cask codex'
-/** npm into the home folder, where Claude Code already lives: needs no admin rights and changes no npm setting. */
-const HOME_LINE = 'npm install -g --prefix ~/.local @openai/codex'
+/** The project's own tap, which its README recommends and which needs no admin rights. */
+export const BREW_LINE = 'brew install anomalyco/tap/opencode'
+/** The vendor's installer, into `~/.opencode/bin`, without touching the person's shell files. */
+export const CURL_LINE = 'curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path'
 
-/**
- * The install command, the first that applies, none of which asks for admin rights:
- * Homebrew's cask when Homebrew is here, otherwise npm with a prefix in the home folder.
- * Never `sudo`, and never npm's own configuration.
- */
+/** The install command, the first that applies, none of which asks for admin rights. */
 export function installFor(env: NodeJS.ProcessEnv = process.env): Install {
   return hasBrew(env)
     ? { line: BREW_LINE, lands: 'Homebrew’s bin folder', source: SOURCE, checked: CHECKED }
-    : { line: HOME_LINE, lands: '~/.local/bin', source: SOURCE, checked: CHECKED }
+    : { line: CURL_LINE, lands: '~/.opencode/bin', source: SOURCE, checked: CHECKED }
 }
 
-/** The install command, or the stand-in a test names (`KEHIKOT_CODEX_INSTALL_LINE`, from the environment of whoever started this server). */
+/** The install command, or the stand-in a test names (`KEHIKOT_OPENCODE_INSTALL_LINE`, from the environment of whoever started this server). */
 function install(env: NodeJS.ProcessEnv = process.env): Install {
-  const said = env.KEHIKOT_CODEX_INSTALL_LINE
+  const said = env.KEHIKOT_OPENCODE_INSTALL_LINE
   const chosen = installFor(env)
   return said ? { ...chosen, line: said } : chosen
 }
@@ -685,57 +666,49 @@ export function plain(output: string): string {
   return output.replace(ESCAPES, '').replace(/\r/g, '')
 }
 
-/** Whether npm failed for lack of permission to write where it was asked to. */
+/** Whether an installer failed for lack of permission to write where it was asked to. */
 export function deniedWrite(output: string): boolean {
   return /\bEACCES\b|permission denied/i.test(plain(output))
 }
 
-/** The folder npm said it could not write to (`/usr/local` out of `/usr/local/lib/node_modules/@openai`), when it said. */
-function deniedFolder(output: string): string | null {
-  const said = plain(output).match(/'(\/[^'\n]*?)\/lib\/node_modules\b[^'\n]*'/) ?? plain(output).match(/'(\/[^'\n]+)'/)
-  return said ? said[1]! : null
-}
-
 /**
  * What the person is told when the installer ended and no binary was found: plain words and the
- * next step, never npm's stack. The whole output stays in the terminal ("See the log").
+ * next step, never a stack. The whole output stays in the terminal ("See the log").
  */
 function explain(output: string, exitCode: number, ran: string, env: NodeJS.ProcessEnv = process.env): string {
   const text = plain(output)
-  if (exitCode === 0) return 'The installer finished, but Codex was not found afterwards. See the log.'
-  if (deniedWrite(text)) {
-    const instead = installFor(env).line
-    const where = deniedFolder(text)
-    if (instead === ran) return `The installer can't write${where ? ` to ${where}` : ' where it was asked to'}. Check that the folder is yours, or install Codex another way: ${SOURCE}`
-    return `npm can't write to ${where ?? 'its global folder'} without admin rights. Install into your home folder instead: ${instead}`
+  if (exitCode === 0) return 'The installer finished, but OpenCode was not found afterwards. See the log.'
+  if (deniedWrite(text)) return `The installer can't write where it was asked to. Check that the folder is yours, or install OpenCode another way: ${SOURCE}`
+  if (exitCode === 127 || /(curl|bash|brew): (command )?not found/i.test(text)) {
+    return ran.startsWith('brew') ? `Homebrew was not found. Install OpenCode with its installer instead: ${CURL_LINE}` : `curl was not found. Install OpenCode another way: ${SOURCE}`
   }
-  if (exitCode === 127 || /(npm|brew): (command )?not found/i.test(text)) {
-    return ran.startsWith('brew') ? 'Homebrew was not found. Install Codex with npm or from the Codex app instead.' : `npm was not found. Install Node.js or Homebrew (https://brew.sh), then try again. Or run ${installFor(env).line} once one is there.`
-  }
-  return `The installer exited with ${exitCode}. See the log, or run ${ran} in a terminal.`
+  if (/could not resolve host|failed to connect/i.test(text)) return 'The installer could not reach the internet. Check the connection and try again.'
+  return `The installer exited with ${exitCode}. See the log, or run ${ran || installFor(env).line} in a terminal.`
 }
 
 /**
- * The variables a Codex process exports to the commands it runs. A module started from inside one
- * would hand them on, and the session opened here would believe it was sandboxed, or a tool call
- * of another conversation.
+ * The variables an OpenCode process sets for itself or a module started inside one would hand on: a
+ * session opened here must not take the other one's configuration, server or client for its own.
  */
 const NESTED = [
-  'CODEX_THREAD_ID',
-  'CODEX_SESSION_ID',
-  'CODEX_TOOL_CALL_ID',
-  'CODEX_SANDBOX',
-  'CODEX_SANDBOX_NETWORK_DISABLED',
-  'CODEX_NETWORK_PROXY_ACTIVE',
-  'CODEX_NON_INTERACTIVE',
-  'CODEX_STARTING_DIFF',
+  'OPENCODE',
+  'OPENCODE_CONFIG_DIR',
+  'OPENCODE_CONFIG',
+  'OPENCODE_CONFIG_CONTENT',
+  'OPENCODE_SERVER_PASSWORD',
+  'OPENCODE_SERVER_USERNAME',
+  'OPENCODE_CLIENT',
+  'OPENCODE_PID',
+  'OPENCODE_TERMINAL',
+  'OPENCODE_CALLER',
+  'KEHIKOT_OPENCODE_SESSION',
 ]
 
 /**
  * A session's environment: the person's (`personEnv`, without the host's own `bun` this module was
- * started with first on its PATH and `BUN_BE_BUN`), without the variables of a Codex it was started
- * inside. A session given the host's `bun` (or Bun's `node` shim) without `BUN_BE_BUN` boots the
- * host on every `bun` or `node` it calls.
+ * started with first on its PATH and `BUN_BE_BUN`), without the variables of an OpenCode it was
+ * started inside. A session given the host's `bun` without `BUN_BE_BUN` boots the host on every
+ * `bun` or `node` it calls.
  */
 function environment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const out: NodeJS.ProcessEnv = personEnv(env)
@@ -744,44 +717,28 @@ function environment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
 }
 
 /* ------------------------------------------------------------------------ *
- * Its hooks: what it says it is doing
+ * What it says it is doing: the plugin's words
  * ------------------------------------------------------------------------ */
 
 /**
- * The Codex events this module hears, and their names in a hook's trust key. Measured on 0.164.0
- * against a stand-in for the model:
+ * The words the session's plugin (`plugin/opencode/kehikot.js`) posts, and what OpenCode said that
+ * made it post them — read from its bus and hooks at v1.19.5:
  *
- *     the person sends a prompt               SessionStart (first prompt of a conversation), UserPromptSubmit
- *     a tool is about to run                  PreToolUse
- *     an approval question is on screen       PermissionRequest   (at once)
- *     the tool has run                        PostToolUse
- *     the turn is over                        Stop
- *     Esc interrupted the turn                Interrupt           (no Stop)
- *     /compact                                PreCompact, PostCompact, then SessionStart (source compact) at the next prompt
- *     /clear                                  SessionStart (source clear, a NEW session_id) at the next prompt
- */
-export type HookEvent = 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'PermissionRequest' | 'PostToolUse' | 'Stop' | 'Interrupt' | 'PreCompact' | 'PostCompact' | 'SubagentStart' | 'SubagentStop'
-
-export const HOOK_KEYS: Record<HookEvent, string> = {
-  SessionStart: 'session_start',
-  UserPromptSubmit: 'user_prompt_submit',
-  PreToolUse: 'pre_tool_use',
-  PermissionRequest: 'permission_request',
-  PostToolUse: 'post_tool_use',
-  Stop: 'stop',
-  Interrupt: 'interrupt',
-  PreCompact: 'pre_compact',
-  PostCompact: 'post_compact',
-  SubagentStart: 'subagent_start',
-  SubagentStop: 'subagent_stop',
-}
-
-/**
- * What each report means. `AskUser` is this module's own name for `PreToolUse` of Codex's
- * question tool (`request_user_input`), which puts a question on screen and waits. A question
- * asked in prose is a turn that ended, `finished` like any other. An interrupt is a turn that is
- * over: the session is back at its prompt. Nothing is reported when a question is answered; a
- * person typing into a session that was waiting for them is that answer (live.ts).
+ *     SessionStart       chat.message, the first prompt of a session in this process (or after it was compacted)
+ *     UserPromptSubmit   chat.message, every prompt of a top-level session
+ *     PostToolUse        tool.execute.after; permission.replied, question.replied (back to work)
+ *     PermissionRequest  permission.asked (permission.updated on older copies): an approval is on screen
+ *     AskUser            question.asked: OpenCode's question tool waits for an answer
+ *     Stop               session.status idle (session.idle on older copies) of a top-level session
+ *     Interrupt          session.error with MessageAbortedError (Esc)
+ *     Compacted          session.compacted
+ *     SubagentStart      session.created with a parentID (the task tool's child session)
+ *     SubagentStop       session.status idle of such a child
+ *     Usage              message.updated of a finished assistant message: tokens, cost, model (meter.ts)
+ *
+ * A permission or question in a child session is said of its top-level session, which waits on it.
+ * A question asked in prose is a turn that ended, `finished` like any other. A person typing into a
+ * session that was waiting for them is the answer as well (live.ts).
  */
 const SIGNALS: Record<string, State> = {
   UserPromptSubmit: 'working',
@@ -792,135 +749,56 @@ const SIGNALS: Record<string, State> = {
   Interrupt: 'finished',
 }
 
-/** The events `tell.sh` is run at, each under its event, and the word it says. */
-export const TELLS: readonly { event: HookEvent; matcher?: string; says: string }[] = [
-  { event: 'SessionStart', says: 'SessionStart' },
-  { event: 'UserPromptSubmit', says: 'UserPromptSubmit' },
-  { event: 'PostToolUse', says: 'PostToolUse' },
-  { event: 'PermissionRequest', says: 'PermissionRequest' },
-  { event: 'PreToolUse', matcher: '^request_user_input', says: 'AskUser' },
-  { event: 'Stop', says: 'Stop' },
-  { event: 'Interrupt', says: 'Interrupt' },
-  /* A subagent's thread started or finished (research.ts): codex-rs hands its hooks `agent_id` (the
-     child thread) and `agent_type` (its role). Its turns run SubagentStop, never Stop. */
-  { event: 'SubagentStart', says: 'SubagentStart' },
-  { event: 'SubagentStop', says: 'SubagentStop' },
-]
-
-/** A TOML string: JSON's spelling is TOML's basic string for everything this module writes. */
-const tomlString = (text: string): string => JSON.stringify(text)
-
-/** JSON with every object's keys sorted, as serde_json writes a value it has sorted (`version_for_toml`). */
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`
-  if (value && typeof value === 'object') {
-    const entries = Object.entries(value as Record<string, unknown>).filter(([, one]) => one !== undefined)
-    entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    return `{${entries.map(([key, one]) => `${JSON.stringify(key)}:${canonical(one)}`).join(',')}}`
-  }
-  return JSON.stringify(value)
-}
-
-/**
- * The hash Codex 0.164.0 trusts one hook handler by (`hook_hash` in codex-rs/hooks): the sha256 of
- * the sorted JSON of `{ event_name, matcher?, hooks: [handler] }`, the handler as Codex normalises
- * it — `type`, `command`, its `timeout` in seconds and `async: false`. Measured: the hash Codex
- * itself wrote when a hook was trusted in its `/hooks` screen is this one.
- */
-export function hookHash(event: HookEvent, matcher: string | undefined, command: string, timeout: number): string {
-  const identity = { event_name: HOOK_KEYS[event], ...(matcher !== undefined ? { matcher } : {}), hooks: [{ type: 'command', command, timeout, async: false }] }
-  return `sha256:${createHash('sha256').update(canonical(identity)).digest('hex')}`
-}
-
-/**
- * The `-c` arguments that give one Codex process these hooks, and trust exactly these.
- *
- *  - `hooks.<Event>=[…]` is Codex's own inline hook table, in the session-flags layer: it adds to
- *    the person's hooks and replaces none (Codex runs every source's hooks).
- *  - `hooks.state={ "/<session-flags>/config.toml:<event>:<group>:<handler>" = { trusted_hash } }`
- *    trusts each of them by its hash, for this process only. Without it Codex asks the person to
- *    review "N hooks" before the session starts. Nothing is written to `config.toml`, and the
- *    person's own untrusted hooks stay untrusted: `--dangerously-bypass-hook-trust`, which would
- *    run those too, is never passed. (A dotted `-c hooks.state."…".trusted_hash=` does not work:
- *    the key holds dots, so the whole table is given as one inline value.)
- *
- * Interrupt hooks may take at most three seconds (Codex caps them).
- */
-function hookArgs(groups: readonly HookGroup[]): string[] {
-  const byEvent = new Map<HookEvent, HookGroup[]>()
-  for (const group of groups) {
-    if (!group.commands.length) continue
-    byEvent.set(group.event, [...(byEvent.get(group.event) ?? []), group])
-  }
-  const args: string[] = []
-  const state: string[] = []
-  for (const [event, list] of byEvent) {
-    const tables = list.map((group, at) => {
-      const handlers = group.commands.map((one, index) => {
-        const timeout = event === 'Interrupt' ? Math.min(3, Math.max(1, one.timeout)) : Math.max(1, one.timeout)
-        state.push(`${tomlString(`/<session-flags>/config.toml:${HOOK_KEYS[event]}:${at}:${index}`)}={trusted_hash=${tomlString(hookHash(event, group.matcher, one.command, timeout))}}`)
-        return `{type="command",command=${tomlString(one.command)},timeout=${timeout}}`
-      })
-      return `{${group.matcher !== undefined ? `matcher=${tomlString(group.matcher)},` : ''}hooks=[${handlers.join(',')}]}`
-    })
-    args.push('-c', `hooks.${event}=[${tables.join(',')}]`)
-  }
-  if (state.length) args.push('-c', `hooks.state={${state.join(',')}}`)
-  return args
-}
+/** Every word the plugin may post; anything else is dropped. */
+export const WORDS: readonly string[] = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'AskUser', 'Stop', 'Interrupt', 'Compacted', 'SubagentStart', 'SubagentStop', 'Usage']
 
 /* ------------------------------------------------------------------------ *
- * Which process holds which conversation
+ * Which process was started on which conversation
  * ------------------------------------------------------------------------ */
 
-const LOCK = /^([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.lock$/
+/** The ps this machine has, by its full path. */
+const PS = ['/bin/ps', '/usr/bin/ps']
 
-/** `lsof -F pn` output: the pid of each process and the files it has open, as `p<pid>` and `n<path>` lines. */
-export function readLsof(text: string): Map<string, number> {
+/**
+ * `ps -axo pid=,command=` output: each `opencode` process started on a session, as `session → pid`.
+ * Only the program itself (its file is named `opencode`, or `.opencode` behind npm's launcher),
+ * and only `--session <id>`, `--session=<id>` or `-s <id>`.
+ */
+export function readPs(text: string): Map<string, number> {
   const out = new Map<string, number>()
-  let pid: number | null = null
   for (const raw of text.split('\n')) {
-    if (raw.startsWith('p')) {
-      const n = Number(raw.slice(1))
-      pid = Number.isSafeInteger(n) && n > 1 ? n : null
-    } else if (raw.startsWith('n') && pid !== null) {
-      const id = LOCK.exec(raw.slice(1).split('/').pop() ?? '')?.[1]
-      if (id && !out.has(id)) out.set(id, pid)
+    const said = /^\s*(\d+)\s+(.*)$/.exec(raw)
+    if (!said) continue
+    const pid = Number(said[1])
+    const words = said[2]!.split(/\s+/)
+    const program = words.findIndex((word) => /(^|\/)\.?opencode$/.test(word))
+    if (program < 0 || !Number.isSafeInteger(pid) || pid <= 1) continue
+    const rest = words.slice(program + 1)
+    for (let i = 0; i < rest.length; i += 1) {
+      const word = rest[i]!
+      const id = word === '--session' || word === '-s' ? rest[i + 1] : word.startsWith('--session=') ? word.slice('--session='.length) : undefined
+      if (id && SESSION_ID.test(id) && !out.has(id)) out.set(id, pid)
     }
   }
   return out
 }
 
-/** The lsof this machine has, by its full path, so that nothing a project puts on PATH is run in its place. */
-const LSOF = ['/usr/sbin/lsof', '/usr/bin/lsof']
-
 /**
- * Every conversation a Codex process holds now, in any folder: one per lock file some process has
- * open. `lsof` reads; nothing is started. A lock file nobody holds is left over from a process that
- * ended and is not a conversation running. A failure is `failed`, never an empty list.
+ * Every conversation an `opencode` process was started on, in any folder (`ps` reads; nothing is
+ * started). One started with no id, or moved to another conversation since, is not seen: OpenCode
+ * holds no lock per conversation to ask. A failure is `failed`, never an empty list.
  */
 async function active(_file: string, env: NodeJS.ProcessEnv = process.env): Promise<Running> {
-  const dir = join(codexHome(env), 'thread-writer-locks')
-  let names: string[]
-  try {
-    names = (await readdir(dir)).filter((one) => LOCK.test(one))
-  } catch (error) {
-    return (error as { code?: string }).code === 'ENOENT' ? { known: true, active: [] } : { known: false, why: 'failed' }
-  }
-  if (names.length === 0) return { known: true, active: [] }
-  const lsof = LSOF.find(runnable)
-  if (!lsof) return { known: false, why: 'failed' }
+  const said = env.KEHIKOT_OPENCODE_PS
+  const ps = said !== undefined ? (said && runnable(said) ? said : undefined) : PS.find(runnable)
+  if (!ps) return { known: false, why: 'failed' }
   const text = await new Promise<string | null>((done) => {
-    execFile(lsof, ['-w', '-F', 'pn', '--', ...names.slice(0, 256).map((one) => join(dir, one))], { timeout: 5000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout) => {
-      /* lsof exits 1 when some of the files are open by nobody: what it printed is still the answer. */
-      if (!error) return done(String(stdout ?? ''))
-      return done((error as { code?: unknown }).code === 1 ? String(stdout ?? '') : null)
-    })
+    execFile(ps, ['-axo', 'pid=,command='], { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (error, stdout) => done(error ? null : String(stdout ?? '')))
   })
   if (text === null) return { known: false, why: 'failed' }
   const out: Active[] = []
-  for (const [session, pid] of readLsof(text)) {
-    out.push({ session, kind: 'interactive', called: 'a Codex process', handle: null, pid, cwd: (await folderOfRecord(session, env)) ?? '', startedAt: null, name: '', state: null, status: null })
+  for (const [session, pid] of readPs(text)) {
+    out.push({ session, kind: 'interactive', called: 'an OpenCode process', handle: null, pid, cwd: (await folderOfRecord(session, env)) ?? '', startedAt: null, name: '', state: null, status: null })
   }
   return { known: true, active: out }
 }
@@ -930,31 +808,37 @@ async function active(_file: string, env: NodeJS.ProcessEnv = process.env): Prom
  * ------------------------------------------------------------------------ */
 
 /**
- * A new session: no arguments of its own — Codex chooses the id. Everything per run (`-c`) is
- * added by whoever starts it.
+ * A new session: no arguments of its own — OpenCode chooses the id. The settings' `--model` and
+ * `--agent` are added by whoever starts it, and everything else rides on `OPENCODE_CONFIG_DIR`.
  *
  * ## Why not in the background
  *
- * Codex 0.164.0 can run conversations on a shared local daemon (`codex app-server daemon`), but
- * any `-c` on the command line puts the session in "embedded mode" instead (measured: "Running
- * without the shared background server: command-line configuration overrides … requires embedded
- * mode"). A session's hooks and doors are per-run overrides, so a session started here is a child
- * of this module's process and ends with it; the next open of its place resumes it by id.
+ * `opencode` runs its TUI and its server in one process (the server in a worker); `opencode serve`
+ * and `opencode attach` could split them, but a session's doors, plugin and skills are this
+ * process's configuration folder, so a session started here is a child of this module's process
+ * and ends with it. The next open of its place resumes it by id (`--session`).
  */
 const fresh = (): string[] => []
 
-/** A recorded session, with a sentence of this module's own as its first prompt when there is one. */
-const resume = (id: string, _name?: string, said?: string): string[] => {
+/**
+ * A recorded session. OpenCode's TUI takes `--prompt` only on its home screen (a new session), not
+ * with `--session`: the one sentence this module may send a resumed conversation is sent by its
+ * plugin instead (`KEHIKOT_OPENCODE_SAY`, live.ts), so `line` is not an argument here.
+ */
+const resume = (id: string): string[] => {
   if (!SESSION_ID.test(id)) throw new Error('that is not a session id')
-  return ['resume', id, ...(said && !said.startsWith('-') ? [said] : [])]
+  return ['--session', id]
 }
 
+/** A run's id before OpenCode names its session: spelled as a session id, never one OpenCode made. */
+const newId = (): string => `ses_kehikot${randomBytes(12).toString('hex')}`
+
 export const PROGRAM: Program = {
-  name: 'Codex',
+  name: 'OpenCode',
   binary: BINARY,
   find,
   supports,
-  newId: () => randomUUID(),
+  newId,
   isId: (id) => SESSION_ID.test(id),
   fresh,
   resume,
@@ -964,7 +848,6 @@ export const PROGRAM: Program = {
   installEnvironment,
   explain,
   environment,
-  hookArgs,
   signal: (event) => (Object.hasOwn(SIGNALS, event) ? SIGNALS[event]! : null),
   active,
 }

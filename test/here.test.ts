@@ -13,17 +13,17 @@ import { PROGRAM, type Active, type Program } from '../program.ts'
 import { writeRollout } from './transcripts.ts'
 import { assign, readPlaces } from '../record.ts'
 import { ORIGIN_SLOT, VERSION_SLOT, fill, servedOrigin, skillDeclarations, skillTemplate, skillText } from '../skills.ts'
-import { CONFIG, HOME } from './setup.ts'
+import { DATA, HOME } from './setup.ts'
 
 /**
- * `$kehikot-here`: a conversation assigned from inside it. What the door believes (a conversation
- * Codex lists as running, in a project the host holds), what it assigns to (the place on
+ * `/kehikot-here`: a conversation assigned from inside it. What the door believes (a conversation
+ * OpenCode lists as running, in a project the host holds), what it assigns to (the place on
  * screen, never a guess), and what it says.
  */
 
 const made: string[] = []
 const dir = () => {
-  const one = realpathSync(mkdtempSync(join(tmpdir(), 'kehikko-codex-here-')))
+  const one = realpathSync(mkdtempSync(join(tmpdir(), 'kehikko-opencode-here-')))
   made.push(one)
   return one
 }
@@ -31,9 +31,9 @@ afterAll(() => {
   for (const one of made) rmSync(one, { recursive: true, force: true })
 })
 
-const A = '11111111-1111-4111-8111-111111111111'
-const B = '22222222-2222-4222-8222-222222222222'
-const C = '33333333-3333-4333-8333-333333333333'
+const A = 'ses_11111111111141118111111111111111'
+const B = 'ses_22222222222242228222222222222222'
+const C = 'ses_33333333333343338333333333333333'
 const WRITING = { epic: 'thesis', parts: ['methods'], kehikko: { key: 'k1a2b3c4' }, kehikkoName: 'writing' }
 const REVIEW = { epic: 'thesis', parts: [], kehikko: { key: 'r9z8y7x6' }, kehikkoName: 'review' }
 const none = new URLSearchParams()
@@ -44,7 +44,7 @@ const read = (project: string) => {
   return got.value
 }
 
-/** A machine: what Codex says is running, the projects the host holds, and pages of this module. */
+/** A machine: what OpenCode says is running, the projects the host holds, and pages of this module. */
 function machine(options: { lists?: boolean } = {}) {
   const running: Active[] = []
   const held = new Set<string>()
@@ -74,7 +74,7 @@ function machine(options: { lists?: boolean } = {}) {
     needs,
     told,
     where,
-    /** Codex runs conversation `id` in `cwd`, in a terminal of its own. */
+    /** OpenCode runs conversation `id` in `cwd`, in a terminal of its own. */
     runsIn: (id: string, cwd: string) => running.push({ session: id, kind: 'interactive', called: 'interactive', handle: null, pid: 4242, cwd, startedAt: 1, name: '' }),
     hold: (project: string) => {
       held.add(project)
@@ -88,7 +88,7 @@ function machine(options: { lists?: boolean } = {}) {
   }
 }
 
-describe('what $kehikot-here may be told after it', () => {
+describe('what /kehikot-here may be told after it', () => {
   test('“own”, “kehikko: <key>”, both, or nothing — and no other words', () => {
     expect(readSay('')).toEqual({ own: false, kehikko: null })
     expect(readSay('own')).toEqual({ own: true, kehikko: null })
@@ -100,19 +100,31 @@ describe('what $kehikot-here may be told after it', () => {
 })
 
 describe('which conversation the door believes', () => {
-  test('an id Codex does not list as running is refused, and nothing is written', async () => {
+  test('a post carrying the secret of a run this module holds is believed at once, in that run’s project', async () => {
+    const m = machine({ lists: false })
+    const p = dir()
+    m.hold(p)
+    m.page('page-vvvvvvvv', p, WRITING)
+    const said = await here(A, '', { ...m.needs, vouched: p })
+    expect(said).toStartWith(`${SAID} Assigned to writing · thesis`)
+    expect(read(p).sessions[A]).toBeDefined()
+    /* Without it, and with nothing to ask, the id is only a claim. */
+    expect(await here(B, '', m.needs)).toContain('nothing was assigned')
+  })
+
+  test('an id OpenCode does not list as running is refused, and nothing is written', async () => {
     const m = machine()
     const p = dir()
     m.hold(p)
     m.page('page-aaaaaaaa', p, WRITING)
     const said = await here(A, '', m.needs)
-    expect(said).toBe(`${SAID} Codex does not list this conversation as running, and no Kehikot project has its record, so nothing was assigned.`)
-    expect(existsSync(join(p, '.kehikot', 'codex', 'places.json'))).toBe(false)
+    expect(said).toBe(`${SAID} OpenCode does not list this conversation as running, and no Kehikot project has its record, so nothing was assigned.`)
+    expect(existsSync(join(p, '.kehikot', 'opencode', 'places.json'))).toBe(false)
   })
 
   test('a string that is not an id is refused before anything is asked', async () => {
     const m = machine()
-    expect(await here('not-an-id', '', m.needs)).toStartWith(`${SAID} That is not a Codex conversation’s id`)
+    expect(await here('not-an-id', '', m.needs)).toStartWith(`${SAID} That is not an OpenCode conversation’s id`)
   })
 
   test('a conversation running in a folder the host does not hold as a project is refused', async () => {
@@ -120,7 +132,7 @@ describe('which conversation the door believes', () => {
     const elsewhere = dir()
     m.runsIn(A, elsewhere)
     expect(await here(A, '', m.needs)).toBe(
-      `${SAID} This conversation runs in ${elsewhere}, which is not a project in Kehikot, so nothing was assigned. Open that folder as a project, or type $kehikot-here in a conversation started in one.`,
+      `${SAID} This conversation runs in ${elsewhere}, which is not a project in Kehikot, so nothing was assigned. Open that folder as a project, or type /kehikot-here in a conversation started in one.`,
     )
   })
 
@@ -133,17 +145,17 @@ describe('which conversation the door believes', () => {
     m.runsIn(A, mine)
     m.page('page-bbbbbbbb', theirs, WRITING)
     const said = await here(A, '', m.needs)
-    expect(said).toStartWith(`${SAID} No kehikko with a Codex container is on screen in `)
-    expect(existsSync(join(theirs, '.kehikot', 'codex', 'places.json'))).toBe(false)
-    expect(existsSync(join(mine, '.kehikot', 'codex', 'places.json'))).toBe(false)
+    expect(said).toStartWith(`${SAID} No kehikko with an OpenCode container is on screen in `)
+    expect(existsSync(join(theirs, '.kehikot', 'opencode', 'places.json'))).toBe(false)
+    expect(existsSync(join(mine, '.kehikot', 'opencode', 'places.json'))).toBe(false)
   })
 
-  test('when Codex cannot be asked, its record in exactly one known project is the evidence', async () => {
+  test('when OpenCode cannot be asked, its record in exactly one known project is the evidence', async () => {
     const m = machine({ lists: false })
     const p = dir()
     m.hold(p)
     m.page('page-cccccccc', p, WRITING)
-    expect(await here(A, '', m.needs)).toStartWith(`${SAID} Codex does not list this conversation as running`)
+    expect(await here(A, '', m.needs)).toStartWith(`${SAID} OpenCode does not list this conversation as running`)
     writeRollout(A, p)
     expect(await here(A, '', m.needs)).toStartWith(`${SAID} Assigned to writing · thesis (methods).`)
   })
@@ -177,7 +189,7 @@ describe('what it assigns to', () => {
     m.runsIn(A, p)
     m.runsIn(B, p)
     expect(await here(A, '', m.needs)).toBe(
-      `${SAID} Assigned to writing · thesis (methods). “tighten the methods” stays this kehikko’s own conversation; type $kehikot-here own to make this one its own instead.`,
+      `${SAID} Assigned to writing · thesis (methods). “tighten the methods” stays this kehikko’s own conversation; type /kehikot-here own to make this one its own instead.`,
     )
     expect(read(p).places[placeKey(WRITING)]?.own).toBe(C)
     expect(read(p).sessions[A]?.home).toBe(placeKey(WRITING))
@@ -190,23 +202,23 @@ describe('what it assigns to', () => {
     const p = dir()
     m.hold(p)
     assign(p, REVIEW, C, { own: true })
-    const before = readFileSync(join(p, '.kehikot', 'codex', 'places.json'), 'utf8')
+    const before = readFileSync(join(p, '.kehikot', 'opencode', 'places.json'), 'utf8')
     m.runsIn(A, p)
     const said = await here(A, '', m.needs)
-    expect(said).toContain('No kehikko with a Codex container is on screen in')
-    expect(said).toContain('$kehikot-here kehikko: r9z8y7x6  (review)')
-    expect(readFileSync(join(p, '.kehikot', 'codex', 'places.json'), 'utf8')).toBe(before)
+    expect(said).toContain('No kehikko with an OpenCode container is on screen in')
+    expect(said).toContain('/kehikot-here kehikko: r9z8y7x6  (review)')
+    expect(readFileSync(join(p, '.kehikot', 'opencode', 'places.json'), 'utf8')).toBe(before)
     /* Named, it goes there. */
     expect(await here(A, 'kehikko: r9z8y7x6', m.needs)).toStartWith(`${SAID} Assigned to review · thesis (whole epic).`)
   })
 
-  test('a framed page whose open kehikko has no Codex container is not “on screen”', async () => {
+  test('a framed page whose open kehikko has no OpenCode container is not “on screen”', async () => {
     const m = machine()
     const p = dir()
     m.hold(p)
     m.runsIn(A, p)
     m.page('page-ffffffff', p, WRITING, false)
-    expect(await here(A, '', m.needs)).toContain('No kehikko with a Codex container is on screen in')
+    expect(await here(A, '', m.needs)).toContain('No kehikko with an OpenCode container is on screen in')
   })
 
   test('two kehikot on screen: it asks which, and “kehikko: <key>” answers', async () => {
@@ -217,10 +229,10 @@ describe('what it assigns to', () => {
     m.page('page-gggggggg', p, WRITING)
     m.page('page-hhhhhhhh', p, REVIEW)
     const said = await here(A, '', m.needs)
-    expect(said).toStartWith(`${SAID} 2 kehikot with a Codex container are on screen in`)
-    expect(said).toContain('$kehikot-here kehikko: k1a2b3c4  (writing · thesis (methods), on screen)')
-    expect(said).toContain('$kehikot-here kehikko: r9z8y7x6  (review · thesis (whole epic), on screen)')
-    expect(existsSync(join(p, '.kehikot', 'codex', 'places.json'))).toBe(false)
+    expect(said).toStartWith(`${SAID} 2 kehikot with an OpenCode container are on screen in`)
+    expect(said).toContain('/kehikot-here kehikko: k1a2b3c4  (writing · thesis (methods), on screen)')
+    expect(said).toContain('/kehikot-here kehikko: r9z8y7x6  (review · thesis (whole epic), on screen)')
+    expect(existsSync(join(p, '.kehikot', 'opencode', 'places.json'))).toBe(false)
     expect(await here(A, 'kehikko: k1a2b3c4 own', m.needs)).toStartWith(`${SAID} Assigned to writing · thesis (methods).`)
     /* A page that stops following is forgotten. */
     m.runs.unshow('page-gggggggg')
@@ -276,46 +288,36 @@ describe('its doors', () => {
     expect(MANIFEST.declares?.skills).toEqual([{ name: 'kehikot-here', summary: expect.any(String), version }])
     expect(MANIFEST.declares?.agentSessions).toEqual({ loadsSkills: true, installsSkills: true })
     expect(version).toMatch(/^[0-9a-f]{12}$/)
-    /* The conversation's own id is the one Codex sets for every command it runs. */
-    expect(text).toContain('session=$CODEX_THREAD_ID')
+    /* The conversation is the plugin's tool's to name: no shell, no curl, no id typed by the model. */
+    expect(text).toContain('`kehikot_here` tool')
+    expect(text).toContain('$ARGUMENTS')
+    expect(text).not.toContain('curl')
     expect(text).not.toContain('CLAUDE_SESSION_ID')
-    /* The sandbox blocks loopback: the command is to be run outside it, which the person approves. */
-    expect(text).toContain('require_escalated')
     /* Filled in: the origin this process serves on, and its own version for a person to paste back. */
     expect(text).not.toContain(ORIGIN_SLOT)
     expect(text).not.toContain(VERSION_SLOT)
-    expect(text).toContain(`${servedOrigin()}/api/here`)
+    expect(text).toContain(servedOrigin())
     expect(text).toContain(`[skill ${version}]`)
     expect((await answer('POST', skillPath('kehikot-here'), none, null, null))?.status).toBe(405)
     expect(await answer('GET', '/kehikot/skills/other.md', none, null, null)).toBeNull()
   })
 
-  test('the skill never dead-ends: its command retries through a restart and always exits 0, and it says what went wrong', () => {
+  test('the skill never dead-ends: with no tool it says where /kehikot-here works, and it never runs on its own', () => {
     const text = skillText('kehikot-here')!
     expect(text.startsWith('---\nname: kehikot-here\ndescription: ')).toBe(true)
-    const commands = text.split('\n').filter((line) => line.trim().startsWith('curl '))
-    expect(commands).toHaveLength(2)
-    for (const flag of ['--retry 4', '--retry-connrefused', '--retry-delay 1', '--retry-max-time 12', '-m 5']) expect(commands[0]).toContain(` ${flag} `)
-    expect(commands[0]).toContain("-w '\\n[curl exit %{exitcode}: %{errormsg}; HTTP %{http_code}]\\n'")
-    expect(commands[0]).toMatch(/ \|\| echo "\[no answer from http:\/\/127\.0\.0\.1:\d+\]"$/)
-    expect(text).toContain(`Kehikot: couldn't reach the Codex module at ${servedOrigin()} (REASON; it may be restarting or not running). Try $kehikot-here again in a moment`)
-    expect(text).toContain('older than this skill')
-    expect(text).toContain('the sandbox kept this conversation from reaching Kehikot')
-    expect(text).toContain("update Codex from Kehikot's Updates menu")
-    /* The registration lookup stays, for a module that moved after the skill was given. */
-    expect(text).toContain('Kehikot/modules/kehikot.codex.json')
-    expect(text).toContain('Never run either command again on your own')
+    expect(text).toContain('If there is no `kehikot_here` tool')
+    expect(text).toContain('Never call the tool again on your own')
   })
 
   test('the template names no port; the text and its version follow the origin the module is on', () => {
     const template = skillTemplate('kehikot-here')!
     expect(template).not.toMatch(/127\.0\.0\.1:\d/)
-    expect(template).toContain(`${ORIGIN_SLOT}/api/here`)
-    const usual = fill(template, 'http://127.0.0.1:8100')
+    expect(template).toContain(ORIGIN_SLOT)
+    const usual = fill(template, 'http://127.0.0.1:8130')
     const moved = fill(template, 'http://127.0.0.1:8101')
     expect(moved.version).not.toBe(usual.version)
-    expect(moved.text).toContain('http://127.0.0.1:8101/api/here ||')
-    expect(moved.text).not.toContain(':8100')
+    expect(moved.text).toContain('http://127.0.0.1:8101')
+    expect(moved.text).not.toContain(':8130')
     expect(skillTextIssue(moved.text, 'kehikot-here')).toBeNull()
     const was = servedOrigin()
     try {
@@ -328,13 +330,14 @@ describe('its doors', () => {
     expect(() => servingAt('http://example.com:80')).toThrow()
   })
 
-  test('nothing here installs a skill: no door, no tool, and nothing written to the person’s Codex config', async () => {
+  test('nothing here installs a skill: no door, no tool, and nothing written to the person’s OpenCode config', async () => {
     for (const path of ['/api/skills', '/api/skill', '/api/install-skill', '/api/skills/install']) {
       expect((await answer('POST', path, none, { name: 'kehikot-here' }, TICKET))?.status).toBe(404)
     }
     const listed = (await answer('POST', '/mcp', none, { jsonrpc: '2.0', id: 1, method: 'tools/list' }, null))?.body as { result: { tools: { name: string }[] } }
     expect(listed.result.tools.map((one) => one.name).filter((name) => /skill|install|assign/.test(name))).toEqual([])
-    expect(existsSync(join(CONFIG, 'skills'))).toBe(false)
+    expect(existsSync(join(HOME, '.config', 'opencode'))).toBe(false)
+    expect(existsSync(join(DATA, 'opencode', 'skills'))).toBe(false)
     expect(existsSync(join(HOME, '.claude', 'skills'))).toBe(false)
   })
 })

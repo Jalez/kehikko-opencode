@@ -6,7 +6,7 @@ import { typedByPerson } from '../input.ts'
  * What an emulator sends that a person did not type.
  *
  * The first group is not invented: it is what `@xterm/headless` and the page's
- * xterm sent Codex 2.1.296, started in a pty with no key pressed — the
+ * xterm sent OpenCode 2.1.296, started in a pty with no key pressed — the
  * answer to `CSI c`, the focus the page gives its terminal once the program
  * has asked to hear of it, and the pointer crossing a program that asked for
  * every motion.
@@ -15,7 +15,7 @@ import { typedByPerson } from '../input.ts'
 const ESC = '\x1b'
 
 describe('what an emulator says by itself', () => {
-  test('what Codex is answered before any key, and what follows the pointer', () => {
+  test('what OpenCode is answered before any key, and what follows the pointer', () => {
     for (const sent of [`${ESC}[?1;2c`, `${ESC}[I`, `${ESC}[O`, `${ESC}[<35;61;14M`, `${ESC}[<0;61;14M`, `${ESC}[<0;61;14m`, `${ESC}[<64;61;14M`]) {
       expect([sent, typedByPerson(sent)]).toEqual([sent, false])
     }

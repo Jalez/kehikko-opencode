@@ -13,19 +13,17 @@ import { PLACE_TOKEN, born, byToken, homeOf, projectRoot, readPlaces, type Named
 /**
  * What a session this module started is told of where it is, without anybody typing anything:
  * its place, and the modules on its kehikko. And the session filed under that place, as
- * `$kehikot-here` would file it.
+ * `/kehikot-here` would file it.
  *
  * ## How it is told
  *
- * A session started here is given two hooks for that one process — `SessionStart` and
- * `UserPromptSubmit` (`-c hooks.*`, see `hookArgs` in program.ts) — that run `context.sh` from its
- * own folder (`sessionKit` in skills.ts), which posts the session's id and its place token
- * to `POST /api/context` and prints what comes back. Codex gives the model what such a hook
- * prints as `hookSpecificOutput.additionalContext`, as a developer message beside the prompt
- * (measured on 0.164.0 with a scratch `CODEX_HOME` and a stand-in for the model). Codex runs a
- * new conversation's SessionStart hook at its first prompt, not when the program opens. Sessions
- * started outside Kehikot do not have these hooks, so none of this reaches them: assigning one is
- * a person's say (`$kehikot-here`).
+ * A session started here is given a plugin for that one process (`plugin/opencode/kehikot.js`, in
+ * its `OPENCODE_CONFIG_DIR`, skills.ts). At each prompt of a top-level conversation OpenCode runs
+ * the plugin's `chat.message` hook, which posts the conversation's id and its place token to
+ * `POST /api/context` — as `SessionStart` at the first prompt this process sees (and the first after
+ * a compaction), then as `UserPromptSubmit` — and adds what comes back to the prompt as a synthetic
+ * text part: the model reads it, the person's TUI does not show it as typed. Sessions started
+ * outside Kehikot do not have the plugin, so none of this reaches them.
  *
  *  - **At every start** — a new conversation, one resumed or woken, one cleared or compacted —
  *    the whole of it: the place, one line per module on the kehikko, with its MCP server's
@@ -43,7 +41,7 @@ import { PLACE_TOKEN, born, byToken, homeOf, projectRoot, readPlaces, type Named
  * ## The filing
  *
  * A conversation this module started is filed under the place it was started at as soon as it is
- * a conversation — Codex holds a record of it — exactly as `$kehikot-here` files one: it
+ * a conversation — OpenCode holds a record of it — exactly as `/kehikot-here` files one: it
  * belongs there, and is that kehikko's own when the kehikko had none (`born`). `settle` in
  * live.ts does this while this process holds the run; the hook does it whatever happened to the
  * run in between (this module restarted, the view closed, the conversation cleared into a new
@@ -69,19 +67,19 @@ export interface ContextNeeds {
   doorsOf(token: string): string[] | null
   /** Where what the conversation was last told is kept. */
   toldFile(token: string): string
-  /** The record changed under this project: what `$kehikot-here` calls after it files one. */
+  /** The record changed under this project: what `/kehikot-here` calls after it files one. */
   told(projectPath: string, assigned?: { key: string; session: string }): void
   log(line: string): void
   /** The session's own folder, which holds the skills it was given (skills.ts), while it runs. */
   kitOf?(token: string): string | null
-  /** Run something a moment later: the filing is tried again while Codex writes its record. Absent: not again. */
+  /** Run something a moment later: the filing is tried again while OpenCode writes its record. Absent: not again. */
   later?(run: () => void, ms: number): void
 }
 
 export type ContextEvent = 'SessionStart' | 'UserPromptSubmit'
 const EVENTS: readonly ContextEvent[] = ['SessionStart', 'UserPromptSubmit']
 
-/** What a hook prints for Codex to add to the model's context. */
+/** What a hook prints for OpenCode to add to the model's context. */
 export interface HookAnswer {
   hookSpecificOutput: { hookEventName: ContextEvent; additionalContext: string }
 }
@@ -104,7 +102,7 @@ export interface Said {
 /** How many changes after the last full notes are kept to show. */
 const SAID_CHANGES = 20
 
-/** How often, and how far apart, a filing waits for Codex's record of a prompt just sent. */
+/** How often, and how far apart, a filing waits for OpenCode's record of a prompt just sent. */
 const FILE_TRIES = 10
 const FILE_EVERY = 500
 
@@ -113,7 +111,7 @@ const FILE_EVERY = 500
  * its door is where "Research complete" is said. The words themselves are the protocol's
  * (`sessionNotes`), the same for every module that runs agent sessions.
  */
-export const SELF = { module: ID, name: 'Codex', door: 'kehikko-codex' } as const
+export const SELF = { module: ID, name: 'OpenCode', door: 'kehikko-opencode' } as const
 
 /**
  * What a session is told about "Research complete" (research.ts): how it says that a finished turn,
@@ -198,10 +196,10 @@ export async function autoFile(projectPath: string, place: NamedPlace, session: 
   const before = ownOfKey(read.value, placeKey(place))
   const written = born(projectPath, place, session, free ? token : null)
   if (!written.ok) {
-    needs.log(`codex: ${session} could not be filed under the place it was started at — ${written.error}`)
+    needs.log(`opencode: ${session} could not be filed under the place it was started at — ${written.error}`)
     return false
   }
-  needs.log(`codex: ${session} filed under the place it was started at${before ? '' : ', as its kehikko’s own (it had none)'} — no $kehikot-here needed`)
+  needs.log(`opencode: ${session} filed under the place it was started at${before ? '' : ', as its kehikko’s own (it had none)'} — no /kehikot-here needed`)
   needs.told(projectPath, { key: placeKey(place), session })
   return true
 }
@@ -219,7 +217,7 @@ function notesPlace(projectPath: string, place: NamedPlace): NotesPlace {
 
 const ownOfKey = (places: Places, key: string): string | null => (Object.hasOwn(places.places, key) ? (places.places[key]?.own ?? places.places[key]?.current ?? null) : null)
 
-/** File it now, or a moment later while Codex writes its record of the prompt just sent. */
+/** File it now, or a moment later while OpenCode writes its record of the prompt just sent. */
 async function fileSoon(projectPath: string, place: NamedPlace, session: string, token: string, needs: ContextNeeds, left = FILE_TRIES): Promise<void> {
   if (await autoFile(projectPath, place, session, token, needs)) return
   const read = readPlaces(projectPath)
@@ -280,7 +278,7 @@ export async function context(asked: { event: string; session: string; token: st
   if (notes.kind === 'start') {
     /* And the skills it was given, each a `$name` it can call (skills.ts): at every start, since a
        compaction or a /clear leaves the model without the list it was told before — and a
-       kehikko-bound skill goes on only where this list names it (`guarded`). How Codex is given
+       kehikko-bound skill goes on only where this list names it (`guarded`). How OpenCode is given
        skills, not what it is told about the modules: Claude Code lists a plugin's skills itself. */
     const kit = needs.kitOf?.(token) ?? null
     const catalog = kit ? skillsText(kitSkills(kit)) : null

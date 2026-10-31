@@ -28,12 +28,12 @@ let bound = PREFERRED_PORT
  */
 function sockets(): Plugin {
   return {
-    name: 'codex-sessions',
+    name: 'opencode-sessions',
     apply: 'serve',
     configureServer(server) {
       const http = server.httpServer
       if (!http) {
-        server.config.logger.error('codex: no HTTP server to attach the session socket to. The container will load and no session will ever open.')
+        server.config.logger.error('opencode: no HTTP server to attach the session socket to. The container will load and no session will ever open.')
         return
       }
       http.once('listening', () => {
@@ -64,7 +64,7 @@ export default defineConfig({
   plugins: [
     serves({ id: ID, prefer: PREFERRED_PORT }),
     sockets(),
-    doors({ manifest: MANIFEST, answer, stream, build: BUILD, page: { title: 'Codex', ticket: TICKET }, maxBodyBytes: MOST_READ, ours }),
+    doors({ manifest: MANIFEST, answer, stream, build: BUILD, page: { title: 'OpenCode', ticket: TICKET }, maxBodyBytes: MOST_READ, ours }),
     react(),
     tailwindcss(),
   ],

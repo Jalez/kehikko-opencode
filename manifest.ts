@@ -3,7 +3,7 @@ import pkg from './package.json'
 import { SETTINGS } from './settings.ts'
 import { EVENTS } from './events.ts'
 
-export const ID = 'kehikot.codex'
+export const ID = 'kehikot.opencode'
 /** The module's version: package.json's, the one place it is written. A release is tagged with it. */
 export const VERSION: string = pkg.version
 
@@ -16,24 +16,24 @@ export const NOTICES = 'kehikot.notifications@1'
 
 /**
  * Where this module would like to answer. Said once, here, and read by `vite.config.ts` and
- * `register.ts`. Modules on this machine sit ten apart; 8100 is past every number Kehikot's
- * official list and this machine's registry give out (8060 Kanban, 8070 Monitor, 8080 is avoided,
- * 8090 Screenplay), and was free when it was chosen.
+ * `register.ts`. Modules on this machine sit ten apart; 8130 is past every number Kehikot's
+ * official list and this machine's registry give out (8100 is Codex's preference, 8110 and 8120
+ * taken or spoken for), and was free when it was chosen.
  *
  * A preference and not a promise: `live.ts` checks a handshake's `Origin` and `Host` against the
  * port this server actually bound, which `vite.config.ts` reads off the listening socket.
  */
-export const PREFERRED_PORT = 8100
+export const PREFERRED_PORT = 8130
 
 /**
  * What this app says about itself when a host asks.
  *
  * ## What it is
  *
- * A terminal with one program in it: the Codex CLI session that belongs to the place the person is
- * looking at. The sibling of the Claude module (`kehikot.claude`), with the same promises: a
- * session belongs to the epic, the parts picked out of it and the kehikko, and moves when any of
- * them does.
+ * A terminal with one program in it: the OpenCode session (the `opencode` TUI) that belongs to the
+ * place the person is looking at. The sibling of the Claude and Codex modules (`kehikot.claude`,
+ * `kehikot.codex`), with the same promises: a session belongs to the epic, the parts picked out of
+ * it and the kehikko, and moves when any of them does.
  *
  * ## What is declared
  *
@@ -43,52 +43,55 @@ export const PREFERRED_PORT = 8100
  *   **`uses: ['events:emit']`, `emits: [NOTICES]`** for a host that does not answer the list.
  * - **`agentSessions: { loadsSkills: true, installsSkills: true }`** (2.21.0, 2.23.0): it runs
  *   agent sessions and loads the kehikko-bound skills of the modules on a session's kehikko into
- *   them, and it installs skills itself, where Codex reads them (`~/.agents/skills`, agentSkills.ts):
- *   Codex has no folder for one process. A host routes the kehikko-bound skills here, tells it which
- *   skills it keeps for every conversation (`everywhere`), and installs none of this module's own
- *   skills for Claude Code.
- * - **`skills`**: its own `$kehikot-here`, written for Codex (doors.ts adds the list, whose versions
+ *   them, and it gives its sessions skills itself, where OpenCode reads them: the session's own
+ *   configuration folder (`OPENCODE_CONFIG_DIR`, skills.ts). A host routes the kehikko-bound skills
+ *   here, tells it which skills it keeps for every conversation (`everywhere`), and installs none of
+ *   this module's own skills (written for OpenCode) for Claude Code.
+ * - **`skills`**: its own `/kehikot-here`, written for OpenCode (doors.ts adds the list, whose versions
  *   follow the origin it serves on).
- * - **`mcp.as: 'kehikko-codex'`**: the id would derive `codex`, the name of the program an agent
- *   is likely to be, and a door called that reads as the agent's own.
+ * - **`mcp.as: 'kehikko-opencode'`**: the id would derive `opencode`, the name of the program an
+ *   agent is likely to be, and a door called that reads as the agent's own.
  * - **`prompt: false`**: nothing here sends a prompt to anything. The person types.
  * - **`storage: true`**: the page opens a WebSocket to its own origin.
  * - **An MCP door with one tool that reads**: which sessions belong to which place.
- * - **`settings`** (2.15.0): resuming conversations a restart cut off, the model, its effort and
- *   when Codex asks before acting — each a person's (settings.ts).
+ * - **`settings`** (2.15.0): resuming conversations a restart cut off, the model, the agent and
+ *   when OpenCode asks before acting — each a person's (settings.ts).
  */
 export const MANIFEST: Manifest = manifestSchema.parse({
   kind: MANIFEST_KIND,
   protocol: PROTOCOL,
   id: ID,
-  name: 'Codex',
+  name: 'OpenCode',
   /* The icon a host draws beside the name: a key of the protocol's module icons. The protocol has
-     no OpenAI mark (`BRAND_MODULE_ICONS`), so a neutral Lucide one no other module uses. */
-  icon: 'lucide:bot',
+     no OpenCode mark (`BRAND_MODULE_ICONS`), so a neutral Lucide one no other module uses. */
+  icon: 'lucide:message-square-code',
   version: VERSION,
-  /* The format of `.kehikot/codex/places.json`. Raise it only in the release
+  /* The format of `.kehikot/opencode/places.json`. Raise it only in the release
      that first writes data an older release cannot read. */
   dataVersion: 1,
-  summary: 'A terminal holding the Codex session that belongs to this epic, these parts and this kehikko.',
+  summary: 'A terminal holding the OpenCode session that belongs to this epic, these parts and this kehikko.',
   tags: ['agents', 'code'],
   guidance:
-    'A person on this canvas has a Codex CLI session open in a terminal, kept for exactly the epic, the picked '
+    'A person on this canvas has an OpenCode CLI session open in a terminal, kept for exactly the epic, the picked '
     + 'parts and the kehikko in front of them. It is theirs: they type in it, and nothing here lets you type into it, '
     + 'start one or end one. Call `sessions` with the project path to see which sessions belong to which place — '
     + 'their first prompt, when each was last active, and whether a running one is working, waiting for its person '
     + 'or finished — before starting work that one of them may already hold. Call `sessions` with `place` to be told '
     + 'in words what a place holds.',
+  /* What every agent session on a kehikko with this module is told beside its name and door (protocol
+     2.36.0, `sessionNotes`): one line, at most 200 characters, read as the module's words. */
+  agentSays: 'The person keeps an OpenCode session for each place here. Call `sessions` before starting work one of them may already hold; you cannot type into one.',
   entry: '/app',
   /* What its content belongs to (protocol 2.29.0): one mode per scope, the default first. */
   modes: [
-    { id: 'codex', label: 'Codex', scope: 'kehikko', scopeSays: 'the Codex sessions kept for this kehikko, at the open epic and its picked parts' },
+    { id: 'opencode', label: 'OpenCode', scope: 'kehikko', scopeSays: 'the OpenCode sessions kept for this kehikko, at the open epic and its picked parts' },
   ],
   mcp: {
     url: '/mcp',
     transport: 'http',
-    as: 'kehikko-codex',
+    as: 'kehikko-opencode',
     about:
-      'Which Codex sessions a person keeps for which place, and whether one is working, waiting or finished;'
+      'Which OpenCode sessions a person keeps for which place, and whether one is working, waiting or finished;'
       + ' tell_finished says a finished turn was research. Starts and types nothing.',
   },
   extensions: { emits: [NOTICES], consumes: [] },

@@ -11,7 +11,7 @@ import { IGNORE, attach, detach, follow, note, readPlaces, rekey, sessionsAt, ty
 
 const made: string[] = []
 const project = () => {
-  const dir = mkdtempSync(join(tmpdir(), 'kehikko-codex-record-'))
+  const dir = mkdtempSync(join(tmpdir(), 'kehikko-opencode-record-'))
   made.push(dir)
   return dir
 }
@@ -21,8 +21,8 @@ afterAll(() => {
 
 const METHODS = { epic: 'thesis', parts: ['methods'], kehikko: { id: 3 }, kehikkoName: 'writing' }
 const BOTH = { epic: 'thesis', parts: ['results', 'methods'], kehikko: { id: 3 }, kehikkoName: 'writing' }
-const A = '11111111-1111-4111-8111-111111111111'
-const B = '22222222-2222-4222-8222-222222222222'
+const A = 'ses_11111111111141118111111111111111'
+const B = 'ses_22222222222242228222222222222222'
 
 const places = (dir: string) => {
   const read = readPlaces(dir)
@@ -36,7 +36,7 @@ describe('the record of which session belongs where', () => {
     expect(places(dir)).toEqual({ version: 1, places: {}, sessions: {} })
     attach(dir, METHODS, A)
     const file = moduleFile(dir, ID, 'places')!
-    expect(file.endsWith('/.kehikot/codex/places.json')).toBe(true)
+    expect(file.endsWith('/.kehikot/opencode/places.json')).toBe(true)
     expect(existsSync(file)).toBe(true)
   })
 
@@ -134,7 +134,7 @@ describe('the record of which session belongs where', () => {
     expect(readPlaces(null).ok).toBe(false)
     expect(attach('', METHODS, A).ok).toBe(false)
     expect(attach('relative/path', METHODS, A).ok).toBe(false)
-    expect(attach(join(tmpdir(), 'kehikko-codex-no-such-folder'), METHODS, A).ok).toBe(false)
+    expect(attach(join(tmpdir(), 'kehikko-opencode-no-such-folder'), METHODS, A).ok).toBe(false)
   })
 
   test('a file that is not JSON is refused rather than written over', () => {
@@ -181,13 +181,13 @@ describe('the record of which session belongs where', () => {
  */
 describe('a kehikko by its key', () => {
   const KEYED = { epic: 'thesis', parts: ['methods'], kehikko: { key: '4072c9e5' }, kehikkoName: 'writing', kehikkoId: 3 }
-  const C = '33333333-3333-4333-8333-333333333333'
-  const D = '44444444-4444-4444-8444-444444444444'
+  const C = 'ses_33333333333343338333333333333333'
+  const D = 'ses_44444444444444448444444444444444'
   const file = (dir: string) => moduleFile(dir, ID, 'places')!
   const raw = (dir: string) => readFileSync(file(dir), 'utf8')
   /** A file as a release before keys wrote it. */
   const old = (dir: string, entries: Record<string, { name: string; sessions: string[] }>, more: Record<string, unknown> = {}) => {
-    mkdirSync(join(dir, '.kehikot', 'codex'), { recursive: true })
+    mkdirSync(join(dir, '.kehikot', 'opencode'), { recursive: true })
     const written = {
       version: 1,
       places: {
@@ -263,7 +263,7 @@ describe('a kehikko by its key', () => {
       'epic=thesis;parts=methods+results;kehikko=key:4072c9e5': { epic: 'thesis', parts: ['methods', 'results'], kehikko: { key: '4072c9e5', id: 28, name: 'writing' }, sessions: [B, C] },
     })
     /* What is known about each session is carried untouched. */
-    expect(places(dir).sessions[A]?.label).toBe('the session 1')
+    expect(places(dir).sessions[A]?.label).toBe('the session s')
   })
 
   test('migration: never by id — the same number under another name is another kehikko, and stays', () => {
@@ -402,7 +402,7 @@ describe('what is shared with the project’s history', () => {
   test('the record is not, by default: the first write puts a .gitignore beside it naming it', () => {
     const dir = project()
     attach(dir, METHODS, A)
-    const ignore = join(dir, '.kehikot', 'codex', '.gitignore')
+    const ignore = join(dir, '.kehikot', 'opencode', '.gitignore')
     expect(readFileSync(ignore, 'utf8')).toBe(IGNORE)
     const rules = IGNORE.split('\n').filter((line) => line && !line.startsWith('#'))
     expect(rules).toEqual(['places.json', 'places.json.*.tmp'])
@@ -410,8 +410,8 @@ describe('what is shared with the project’s history', () => {
 
   test('one that is already there is the person’s, and is never written over — emptied, the record is shared', () => {
     const dir = project()
-    mkdirSync(join(dir, '.kehikot', 'codex'), { recursive: true })
-    const ignore = join(dir, '.kehikot', 'codex', '.gitignore')
+    mkdirSync(join(dir, '.kehikot', 'opencode'), { recursive: true })
+    const ignore = join(dir, '.kehikot', 'opencode', '.gitignore')
     writeFileSync(ignore, '# shared on purpose\n')
     attach(dir, METHODS, A)
     attach(dir, METHODS, B)
@@ -426,7 +426,7 @@ describe('what is shared with the project’s history', () => {
 })
 
 describe('a conversation carried on under another id', () => {
-  const C = '33333333-3333-4333-8333-333333333333'
+  const C = 'ses_33333333333343338333333333333333'
   test('the new id takes the old one’s place everywhere, as current where it was', () => {
     const dir = project()
     const ONE = { epic: 'thesis', parts: [], kehikko: { id: 3 }, kehikkoName: 'writing' }

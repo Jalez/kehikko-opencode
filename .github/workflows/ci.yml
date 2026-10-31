@@ -13,6 +13,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
+      - run: sqlite3 --version || (sudo apt-get update && sudo apt-get install -y sqlite3)
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
       - run: bun run test

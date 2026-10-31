@@ -11,7 +11,7 @@ import { StrictMode } from 'react'
  * causes on this side of the socket: two sockets to one view (an effect that
  * ran twice without its cleanup, a re-render that reconnected), the screen the
  * server sends on attach written into an emulator that already holds it, or a
- * resize the pty was told about over and over — each a SIGWINCH, and Codex
+ * resize the pty was told about over and over — each a SIGWINCH, and OpenCode
  * Code reprints its conversation on every one. The first two are asserted here
  * directly; the server's half of the third (the screen, then what followed, and
  * nothing twice) is in `live.test.ts`. The last is asserted by counting what

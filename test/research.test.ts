@@ -15,7 +15,7 @@ describe('the event', () => {
     expect(declaredEvent(MANIFEST.events, { state: 'done', event: 'research-complete' })?.says).toBe('Research complete')
   })
 
-  test('a session is told how to say it, for itself and its subagents; so is $kehikot-here', async () => {
+  test('a session is told how to say it, for itself and its subagents; so is /kehikot-here', async () => {
     expect(RESEARCH_LINE).toContain('tell_finished({ event: "research-complete", label })')
     expect(RESEARCH_LINE).toContain('subagent')
     const skill = await Bun.file(join(import.meta.dir, '..', 'plugin', 'skills', 'kehikot-here', 'SKILL.md')).text()
@@ -25,7 +25,7 @@ describe('the event', () => {
 
 describe('isResearch, the one rule', () => {
   test('an explorer is research; so is a task with a research word', () => {
-    expect(isResearch({ agentType: 'explorer', task: 'Where is X?' })).toBe(true)
+    expect(isResearch({ agentType: 'explore', task: 'Where is X?' })).toBe(true)
     expect(isResearch({ agentType: 'default', task: 'Compare the two parsers' })).toBe(true)
     expect(isResearch({ agentType: 'worker', task: 'Investigate the flaky test' })).toBe(true)
   })

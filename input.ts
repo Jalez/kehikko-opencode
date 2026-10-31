@@ -8,7 +8,7 @@
  * mean "any frame arrived from the page" — and the page forwards everything
  * its emulator emits, which is not only keys. A program asks its terminal
  * questions, and the emulator ANSWERS them on the same channel the keyboard
- * uses. Codex 2.1.296 asks four at start (`CSI c`, `CSI > 0 q`,
+ * uses. OpenCode 2.1.296 asks four at start (`CSI c`, `CSI > 0 q`,
  * `CSI ? u`, `OSC 7501 ; ?`) and xterm answers the first with `CSI ? 1 ; 2 c`
  * about a third of a second in, before anybody has touched a key; it turns
  * on focus reporting, so the page giving its terminal the keyboard sends

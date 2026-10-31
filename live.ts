@@ -11,18 +11,16 @@ import type { RunSockets } from 'kehikot-module-protocol/run'
 import { mintTicket, sameTicket } from 'kehikot-module-protocol/serve'
 
 import { emptyPrompt, promptAfter, typedByPerson, type Prompt } from './input.ts'
-import { Gauges } from './gauges.ts'
-import { contextOf, type Context } from './meter.ts'
+import { Gauges, contextOf, type Context, type Reported } from './meter.ts'
 import { isKehikkoKey, kehikkoOf, placeKey, sortedParts, type Kehikko } from './place.ts'
 import { cutOffs, cutOffWords, midTurn, movedOn, type CutOff } from './cutoff.ts'
-import { PROGRAM, TELLS, headOf, home, learnSession, recordFile, sessionName, type Active, type ActiveStatus, type HookGroup, type Program, type Running, type State } from './program.ts'
+import { PROGRAM, WORDS, headOf, home, learnSession, recordFile, sessionName, type Active, type ActiveStatus, type Program, type Running, type State } from './program.ts'
 import { PLACE_TOKEN, assign, attach, born, byToken, follow, homeOf, markSession, markSessions, note, projectRoot, readPlaces, readSettings, recordedIds, sighted, tokenFor, type NamedPlace, type PlaceEntry, type Places, type SessionEntry } from './record.ts'
-import { disabledArgs, sweep } from './agentSkills.ts'
-import { contextScriptIn, removeKit, sessionKit } from './skills.ts'
+import { removeKit, sessionKit } from './skills.ts'
 import { sessionFlags } from './settings.ts'
-import { doorArgs, freshToken, hostDoors, hostPlace, type DoorsAsked, type HostPlace, type SessionDoor } from './doorConfig.ts'
+import { freshToken, hostDoors, hostPlace, type DoorsAsked, type HostPlace, type SessionDoor } from './doorConfig.ts'
 import { readPlaceKey } from './place.ts'
-import { AGENT_ID, AGENT_TYPE, EVENT_IDS, FOUND_MOST, isResearch, subagentTask, type Found, type Told } from './research.ts'
+import { AGENT_ID, AGENT_TYPE, EVENT_IDS, FOUND_MOST, isResearch, taskLine, type Found, type Told } from './research.ts'
 import { context, toldWords, type HookAnswer, type Said, type Started } from './context.ts'
 
 /**
@@ -79,7 +77,7 @@ import { context, toldWords, type HookAnswer, type Said, type Started } from './
  *
  * Whether a session is working, waiting for the person or done with its turn
  * is something the program SAYS (`reports` in program.ts): at each of those
- * moments it runs `tell.sh`, which posts one word to this process over
+ * moments its plugin (plugin/opencode/kehikot.js) posts one word to this process over
  * loopback. Nothing here reads a screen to guess at it.
  *
  * What stands behind that word:
@@ -110,8 +108,8 @@ import { context, toldWords, type HookAnswer, type Said, type Started } from './
  * the only one: put away after a long silence.
  *
  * When this process stops, what stops with it is the pty of each run, and the
- * Codex process in it: a session's hooks and doors are per-run settings, and
- * Codex runs a session with per-run settings in its own process rather than on
+ * OpenCode process in it: a session's hooks and doors are per-run settings, and
+ * OpenCode runs a session with per-run settings in its own process rather than on
  * its shared background server (see `fresh` in program.ts). The next open of
  * the place resumes it by id. What a restart cut off mid-turn is looked for
  * when a project is first named (`recover`).
@@ -120,10 +118,10 @@ import { context, toldWords, type HookAnswer, type Said, type Started } from './
  *
  * A session this process started is found in `runs`, and a second viewer is
  * put on it. One it did NOT start — open in another terminal, an editor, the
- * Codex app — is asked about before every resume (`active` in program.ts:
- * which process holds the conversation's lock file). Open elsewhere, nothing
+ * OpenCode app — is asked about before every resume (`active` in program.ts:
+ * which `opencode` process was started on the conversation). Open elsewhere, nothing
  * is started and the page asks; only a person's "open it here anyway" resumes
- * it, and Codex itself then says the conversation is open in another app and
+ * it, and OpenCode itself then says the conversation is open in another app and
  * offers to retry or fork it. When the program cannot be asked, it is resumed
  * as before, and that is SAID. Nothing here stops, signals or takes over a
  * process this module did not start.
@@ -135,7 +133,7 @@ import { context, toldWords, type HookAnswer, type Said, type Started } from './
  * process printed into its own page carried in the socket's first frame, with
  * nothing started until that frame has been read. It keeps other pages out.
  * It does not keep out a program already running as this user, which could
- * run `codex` itself without asking.
+ * run `opencode` itself without asking.
  *
  * What a socket can ask for is narrower than there: not a shell, but this one
  * program, in a folder that exists, on a session id this module minted or the
@@ -192,7 +190,7 @@ const UNTOUCHED_GRACE = 20_000
  * judged the way every session used to be — by how long the program has
  * printed nothing:
  *
- *  - Waiting at its prompt, Codex prints NOTHING. Measured on 2.1.296:
+ *  - Waiting at its prompt, OpenCode prints NOTHING. Measured on 2.1.296:
  *    started in a pty, brought to its prompt, nothing typed, and every byte
  *    it printed in twenty minutes timed. There were 1133 of them, and the
  *    last came eleven seconds after it started.
@@ -208,9 +206,9 @@ const UNTOUCHED_GRACE = 20_000
  *
  * What is put away is the process. The conversation is the program's record,
  * and the next visit to the place resumes it by id (`open`, below).
- * `KEHIKOT_CODEX_QUIET_MS` moves it; it is not a limit anybody can run into.
+ * `KEHIKOT_OPENCODE_QUIET_MS` moves it; it is not a limit anybody can run into.
  */
-export const QUIET_REST = Math.max(1_000, Math.trunc(Number(process.env.KEHIKOT_CODEX_QUIET_MS) || 30 * 60_000))
+export const QUIET_REST = Math.max(1_000, Math.trunc(Number(process.env.KEHIKOT_OPENCODE_QUIET_MS) || 30 * 60_000))
 /** How often the quiet ones are looked for. */
 const REST_EVERY = 60_000
 /**
@@ -231,9 +229,9 @@ const STALE_WORK = 2 * 60_000
 /**
  * How often the program is asked what the background sessions this module
  * has a view of are doing, while it has any, and those of every watched
- * project's places while a page follows along (see `watch`, `Unviewed`). For Codex the asking
- * is which process holds each conversation's lock file (`active` in program.ts): it is how a
- * run's process is followed to a conversation it moved to, and nothing Codex runs is ever a
+ * project's places while a page follows along (see `watch`, `Unviewed`). For OpenCode the asking
+ * is which process was started on each conversation (`active` in program.ts): it is how a
+ * run's process is followed to a conversation it moved to, and nothing OpenCode runs is ever a
  * background session to view, so the views' part of this never applies.
  */
 const WATCH_EVERY = 7_000
@@ -257,32 +255,26 @@ const NOTICES_HELD = 32
  * finished.
  */
 const HELD_WAIT = 3_000
-/** The script a session's program runs to report (see "Told, not read"). */
-const TELL = join(import.meta.dirname, 'tell.sh')
-/** The environment a report is made from. Read by `tell.sh` and by nothing else. */
+/** The environment a report is made from. Read by the session's plugin (`plugin/opencode/kehikot.js`) and by nothing else. */
 export const TELL_ENV = { port: 'KEHIKOT_TELL_PORT', secret: 'KEHIKOT_TELL_SECRET', session: 'KEHIKOT_TELL_SESSION' } as const
-
-/** A word in single quotes for `/bin/sh`, whatever is in it. Used for one thing: this module's own path. */
-export const quoted = (text: string): string => `'${text.replace(/'/g, `'\\''`)}'`
-
-/** The line the program is to run for one event. The event is a name out of `program.ts`, never anything heard. */
-export const tellLine = (event: string, script: string = TELL): string => `/bin/sh ${quoted(script)} ${event}`
+/** What the plugin sends, once, to a conversation a restart cut off (`RESUME_LINE`): the sentence and the conversation. */
+export const SAY_ENV = { line: 'KEHIKOT_OPENCODE_SAY', to: 'KEHIKOT_OPENCODE_SAY_TO' } as const
 /** A session that still has no first prompt after this many looks is not asked again until it ends. */
 const LABEL_TRIES = 8
 /** How often a running session's process is asked which conversation it is showing (see `track`). */
 const TRACK_EVERY = 10_000
 
 /**
- * How often the context of each session somebody has on screen is looked at again: one `stat` of
- * its transcript, and a read of what was appended when it grew (`Gauges` in gauges.ts). What its
- * own status line posts is said at once, between.
+ * How often the context of each session somebody has on screen is looked at again: what its plugin
+ * last reported (`Gauges` in meter.ts) and the cost its record holds (one read of OpenCode's
+ * database when it changed).
  */
 const METER_EVERY = 2_500
 
-/** What Compact and Clear type at the prompt: Codex's own slash commands, exactly as a person types them (both measured on 0.164.0). */
+/** What Compact and Clear type at the prompt: OpenCode's own slash commands, exactly as a person types them (`/compact`, and `/clear`, an alias of `/new`, in its TUI at v1.19.5). */
 export const COMMANDS = { compact: '/compact', clear: '/clear' } as const
 export type Command = keyof typeof COMMANDS
-/** How long after a command's text its Enter is typed: Codex's command menu settles on what was typed first (measured on 2.1.310). */
+/** How long after a command's text its Enter is typed: OpenCode's command menu settles on what was typed first (measured on 2.1.310). */
 const ENTER_AFTER = 250
 /**
  * A sighting of the prompt (`agents --json` saying `idle`) has to be this much later than a line
@@ -315,7 +307,7 @@ const CUTOFF_TAIL = 1024 * 1024
 const RESUMED_FOR = 24 * 60 * 60_000
 
 /**
- * What a session is called in Codex's own lists, from where it belongs:
+ * What a session is called in OpenCode's own lists, from where it belongs:
  * the project's folder, the epic, the picked parts by their headings, the
  * kehikko — `hippos-portal · kiosk-info-reel · Reel · main`.
  */
@@ -591,7 +583,7 @@ export interface Run {
   background: number
   /**
    * The background session this run is a VIEW of, in the Claude module this file shares its
-   * shape with. Always null for Codex: it has no background session to attach to.
+   * shape with. Always null for OpenCode: it has no background session to attach to.
    */
   joined: Active | null
   /** The other process that had this conversation open when a person chose to open a copy of it here. Null otherwise. */
@@ -637,7 +629,7 @@ export interface Run {
   plugin: string | null
   /**
    * A conversation this module runs in the background, in the Claude module this file shares its
-   * shape with. Always false for Codex (see `fresh` in program.ts).
+   * shape with. Always false for OpenCode (see `fresh` in program.ts).
    */
   owned: boolean
   /** The folder its doors file and plugin are kept in while it may be woken (`keptDirOf`). */
@@ -860,7 +852,7 @@ export function activityRows(runs: Iterable<Run>, project: string | null = null,
     rows.push({
       id: run.settled ?? run.id,
       state,
-      label: clip((tag?.label ?? run.label).replace(/\s+/g, ' ').trim() || 'Codex session', ACTIVITY_LABEL),
+      label: clip((tag?.label ?? run.label).replace(/\s+/g, ' ').trim() || 'OpenCode session', ACTIVITY_LABEL),
       ...(Object.keys(place).length > 0 ? { place } : {}),
       since: run.stateSince,
       detail: clip(detail, ACTIVITY_DETAIL),
@@ -885,7 +877,7 @@ export function activityRows(runs: Iterable<Run>, project: string | null = null,
     rows.push({
       id: one.session,
       state: ACTIVITY_STATE[one.state],
-      label: clip(one.label.replace(/\s+/g, ' ').trim() || 'Codex session', ACTIVITY_LABEL),
+      label: clip(one.label.replace(/\s+/g, ' ').trim() || 'OpenCode session', ACTIVITY_LABEL),
       ...(Object.keys(place).length > 0 ? { place } : {}),
       since: one.since,
       detail: clip(one.state === 'needs-you' ? 'waiting for you: a permission or an answer' : one.state === 'finished' ? 'turn ended' : 'working', ACTIVITY_DETAIL),
@@ -953,7 +945,7 @@ export function recordRows(places: Places, projectPath: string, now: number): Ac
     const at = placeEntryFor(places, id)
     if (!at) continue
     const place = rowPlace(at)
-    const title = entry.label.replace(/\s+/g, ' ').trim() || 'Codex session'
+    const title = entry.label.replace(/\s+/g, ' ').trim() || 'OpenCode session'
     const open = entry.cutOff?.open ?? []
     if (open.length > 0) {
       const { said, detail } = cutOffWords(open)
@@ -1004,7 +996,7 @@ async function tailOfFile(file: string, most: number): Promise<string> {
 
 /**
  * A background session that belongs to one of a project's places and that no run here is a view
- * of — in the Claude module this file shares its shape with. Codex runs none: `active` never
+ * of — in the Claude module this file shares its shape with. OpenCode runs none: `active` never
  * lists a `background` kind, so this list stays empty. Its process is not
  * this module's and runs none of its hooks, so what it is doing is what the program says
  * (`agents --json`, its `state`), asked on the same clock as the views (`watch`).
@@ -1036,7 +1028,7 @@ export interface Showing {
   /** The place's key, and the place in words. */
   key: string
   place: NamedPlace
-  /** Whether the open kehikko has a Codex container: false when the page is framed but its kehikko holds none. */
+  /** Whether the open kehikko has an OpenCode container: false when the page is framed but its kehikko holds none. */
   onScreen: boolean
   since: number
 }
@@ -1077,7 +1069,7 @@ export interface Metered {
   context: Context | null
 }
 
-/** What the feed's `sessions` event says: the project whose record changed, and — from `$kehikot-here` — where which conversation was connected. */
+/** What the feed's `sessions` event says: the project whose record changed, and — from `/kehikot-here` — where which conversation was connected. */
 export interface SessionsChanged {
   project: string
   key?: string
@@ -1085,8 +1077,6 @@ export interface SessionsChanged {
 }
 
 export interface RunsOptions {
-  /** Where the first line of a subagent's task is read from (research.ts); a test gives its own. */
-  subagentTask?(agent: string): Promise<string | null>
   spawn: Spawn
   screen: (cols: number, rows: number) => Screen | Promise<Screen>
   program?: Program
@@ -1114,10 +1104,8 @@ export interface RunsOptions {
   place?: (asked: DoorsAsked) => Promise<HostPlace | null>
   /** How a session's skills are fetched from the modules on its kehikko; a test stands one in. */
   fetch?: typeof fetch
-  /** Where `--mcp-config` files are written; this user's temporary folder by default. */
+  /** Where a session's folder (`OPENCODE_CONFIG_DIR`) is made; this user's temporary folder by default. */
   configBase?: string
-  /** Where Kehikot's skills are installed for Codex: `~/.agents/skills` by default (agentSkills.ts). A test points it at scratch. */
-  agentsDir?: string
 }
 
 /**
@@ -1181,7 +1169,7 @@ export class Runs {
    * kept folder (`writeKeptPlace`), for when this process is another one. The newest few hundred.
    */
   private readonly issued = new Map<string, Started>()
-  /** Every session's transcript, read as it grows, for its context (meter.ts). */
+  /** What every session's plugin reported of its context (meter.ts). */
   private readonly gauges = new Gauges()
   /** What each run's viewers were last told of its context and whether Compact and Clear can be pressed. */
   private readonly metered = new WeakMap<Run, string>()
@@ -1232,7 +1220,7 @@ export class Runs {
     if (!this.recovering.has(projectPath)) {
       this.recovering.set(
         projectPath,
-        this.recover(projectPath).catch((error: unknown) => this.log(`codex: looking for what a restart cut off in ${projectPath} failed — ${error instanceof Error ? error.message : String(error)}`)),
+        this.recover(projectPath).catch((error: unknown) => this.log(`opencode: looking for what a restart cut off in ${projectPath} failed — ${error instanceof Error ? error.message : String(error)}`)),
       )
     }
     this.kick()
@@ -1249,7 +1237,7 @@ export class Runs {
    *
    * ## A conversation a restart cut off mid-turn
    *
-   * A Codex session started here is a child of this process (see `fresh` in program.ts), so a
+   * A OpenCode session started here is a child of this process (see `fresh` in program.ts), so a
    * restart of the module or of Kehikot ends it. Each conversation's record carries `working` while
    * this module sees it working; one still marked and no longer held by any process was cut off.
    * A record from before that mark is judged by its transcript instead: grown in the last half
@@ -1259,7 +1247,7 @@ export class Runs {
    * one a person ended here (ending it clears the mark): one Inbox line says its turn was cut off,
    * and — unless the person turned off "Resume conversations cut off by a restart" in this project
    * — the next time its place is opened it is resumed with one sentence of this module's
-   * (`RESUME_LINE`, see `start`). Codex has no background to wake it in unasked.
+   * (`RESUME_LINE`, see `start`). OpenCode has no background to wake it in unasked.
    *
    * ## Background work that did not finish
    *
@@ -1291,16 +1279,16 @@ export class Runs {
           return true
         })
         if (!settings.resumeCutOff) {
-          this.log(`codex: ${id} was working when it was cut off by a restart; not resumed — "${RESUME_SETTING}" is off in ${projectPath}`)
+          this.log(`opencode: ${id} was working when it was cut off by a restart; not resumed — "${RESUME_SETTING}" is off in ${projectPath}`)
           markSession(projectPath, id, (one) => {
             one.cutOff = { through: one.cutOff?.through ?? this.now(), open: [...(one.cutOff?.open ?? []), { at: this.now(), kind: 'turn' as const, summary: 'Its turn was cut off when Kehikot restarted', tasks: 1 }].slice(-8) }
             return true
           })
           continue
         }
-        /* Codex has no background to wake it in: it is told what happened when the person opens it
+        /* OpenCode has no background to wake it in: it is told what happened when the person opens it
            (`start`), and until then one Inbox line says it was cut off. */
-        this.log(`codex: ${id} was working when it was cut off by a restart — it is told so when its place is next opened`)
+        this.log(`opencode: ${id} was working when it was cut off by a restart — it is told so when its place is next opened`)
         markSession(projectPath, id, (one) => {
           one.cutOff = { through: one.cutOff?.through ?? this.now(), open: [...(one.cutOff?.open ?? []), { at: this.now(), kind: 'turn' as const, summary: 'Its turn was cut off when Kehikot restarted', tasks: 1 }].slice(-8) }
           one.resumeLine = true
@@ -1366,15 +1354,15 @@ export class Runs {
       const dealt = open.length > 0 && movedOn(tail, latest, [RESUME_LINE])
       const next = { through: fresh.reduce((most, one) => Math.max(most, one.at), since), open: dealt ? [] : open }
       if (JSON.stringify(next) === JSON.stringify(entry.cutOff ?? null)) continue
-      if (fresh.length) this.log(`codex: ${id} — ${fresh.map((one) => one.summary).join('; ')}`)
-      if (dealt) this.log(`codex: ${id} moved on since its background work was cut off; its Inbox line goes`)
+      if (fresh.length) this.log(`opencode: ${id} — ${fresh.map((one) => one.summary).join('; ')}`)
+      if (dealt) this.log(`opencode: ${id} moved on since its background work was cut off; its Inbox line goes`)
       edits.set(id, (one) => {
         one.cutOff = next
         return true
       })
     }
     const written = markSessions(projectPath, edits)
-    if (!written.ok) this.log(`codex: ${written.error}`)
+    if (!written.ok) this.log(`opencode: ${written.error}`)
     this.recount(projectPath)
   }
 
@@ -1403,7 +1391,7 @@ export class Runs {
       delete entry.working
       return true
     })
-    if (!written.ok) this.log(`codex: ${written.error}`)
+    if (!written.ok) this.log(`opencode: ${written.error}`)
   }
 
   /** The person has the conversation on screen: its "resumed after a restart" line has been seen, and goes. */
@@ -1443,7 +1431,7 @@ export class Runs {
    * doing (`agents --json`, its `state`), and make that the run's state — so
    * that it is said, listed and noticed exactly as a session that reports is.
    *
-   * (In the Claude module a view runs `claude attach`, which runs no hooks; Codex has no such
+   * (In the Claude module a view runs `claude attach`, which runs no hooks; OpenCode has no such
    * view.) Its state is asked, on a clock, for as long as there is a view open, and the clock
    * stops with the last one. One asking at a time. A failed asking changes
    * nothing, waits longer before the next, and is logged once until one works.
@@ -1457,11 +1445,11 @@ export class Runs {
       const asked = this.now()
       const running = await this.running()
       if (!running.known) {
-        if (this.watchFailed === 0) this.log(`codex: could not ask what the background sessions are doing (${running.why === 'too-old' ? 'this copy has no `agents --json`' : 'the asking failed'}) — asking less often until it works`)
+        if (this.watchFailed === 0) this.log(`opencode: could not ask what the background sessions are doing (${running.why === 'too-old' ? 'this copy has no `agents --json`' : 'the asking failed'}) — asking less often until it works`)
         this.watchFailed += 1
         return
       }
-      if (this.watchFailed > 0) this.log('codex: asking what the background sessions are doing works again')
+      if (this.watchFailed > 0) this.log('opencode: asking what the background sessions are doing works again')
       this.watchFailed = 0
       for (const run of this.views()) {
         /* By its handle as well: after /clear the background session is the same job on a new conversation. */
@@ -1488,7 +1476,7 @@ export class Runs {
   /**
    * The background sessions of every watched project's places that no run here is a view of, from
    * what the program says is running and each project's `places.json` — and nothing else. A place's
-   * session is followed to where its conversation is now (`headOf`), since Codex carries a
+   * session is followed to where its conversation is now (`headOf`), since OpenCode carries a
    * conversation on under a new id. A session listed under several places is said once, under the
    * place whose `current` it is, else the first place that lists it. A change of state is said to
    * every follower, and a turn that ended or stopped for the person is noticed as a view's is; one
@@ -1530,7 +1518,7 @@ export class Runs {
             label: listed.name || places.sessions[head]?.label || places.sessions[id]?.label || '',
             state,
             since: state === null ? (was && was.state === null ? was.since : this.now()) : this.entered(projectPath, head, state),
-            /* Called something in the record: something was said in it. (Codex runs no background session, so this is never reached.) */
+            /* Called something in the record: something was said in it. (OpenCode runs no background session, so this is never reached.) */
             turned: Boolean(places.sessions[head]?.label || places.sessions[id]?.label),
           })
         }
@@ -1621,11 +1609,12 @@ export class Runs {
     await this.moveTo(run, listed.session, running)
   }
 
-  /** A session's context, from its transcript (read as it grows) and its own status line. Null when neither says anything. */
+  /** A session's context, from what its plugin reported and the cost its record holds. Null when neither says anything. */
   async contextOf(projectPath: string, session: string): Promise<Context | null> {
     if (!this.program.isId(session)) return null
-    const file = await recordFile(projectPath, session)
-    return contextOf(await this.gauges.read(file))
+    const recorded = (await this.program.sessions(projectPath, [session]).catch(() => [])).find((one) => one.id === session)
+    const live = [...this.runs.values()].some((run) => run.what === 'session' && !run.ended && run.settled === session)
+    return contextOf(this.gauges.get(session), recorded?.cost ?? null, live)
   }
 
   /**
@@ -1638,10 +1627,10 @@ export class Runs {
   readiness(run: Run): string | null {
     if (run.what !== 'session' || run.ended) return 'The session is not running.'
     if (!run.settled) return 'Nothing has been said in this conversation yet.'
-    if (run.prompt.chars > 0) return 'Something is typed at Codex’s prompt and not sent. Send it or clear it first.'
+    if (run.prompt.chars > 0) return 'Something is typed at OpenCode’s prompt and not sent. Send it or clear it first.'
     const said: { at: number; idle: boolean; why: string }[] = []
-    const busy = 'Codex is working. Compact and Clear wait until it is back at its prompt.'
-    const asking = 'Codex is waiting for an answer on screen.'
+    const busy = 'OpenCode is working. Compact and Clear wait until it is back at its prompt.'
+    const asking = 'OpenCode is waiting for an answer on screen.'
     if (run.secret !== null && run.state !== null) {
       said.push({ at: run.stateSince, idle: run.state === 'finished', why: run.state === 'needs-you' ? asking : busy })
     }
@@ -1649,11 +1638,11 @@ export class Runs {
       said.push({ at: run.statusAt, idle: run.status === 'idle', why: run.status === 'waiting' ? asking : run.status === 'shell' ? 'A shell command is running in it.' : busy })
     }
     const newest = said.sort((a, b) => b.at - a.at)[0]
-    if (!newest) return 'It is not known yet whether Codex is waiting at its prompt.'
+    if (!newest) return 'It is not known yet whether OpenCode is waiting at its prompt.'
     if (!newest.idle) return newest.why
     /* A turn's end its own hook said (`Stop`) comes after the turn; `agents --json` may say `idle` before one begins. */
     const taken = newest.at === run.stateSince && run.state === 'finished' ? 0 : TAKEN_AFTER
-    if (newest.at <= run.prompt.sentAt + taken) return 'Codex has not been seen at its prompt since a line was sent to it.'
+    if (newest.at <= run.prompt.sentAt + taken) return 'OpenCode has not been seen at its prompt since a line was sent to it.'
     /* Not what it prints: an idle program redraws when its terminal gains or loses the keyboard (measured), so printing says nothing here. */
     return null
   }
@@ -1683,7 +1672,7 @@ export class Runs {
   }
 
   /**
-   * Compact or Clear, on a person's press in the page: Codex's own `/compact` or `/clear`,
+   * Compact or Clear, on a person's press in the page: OpenCode's own `/compact` or `/clear`,
    * typed at the session's prompt through the pty the person's keys go to — the attach of a
    * background one — exactly as a person types it. Only when it can be (`readiness`); the reason
    * otherwise. Reached from the page's own socket and nothing else: no door and no MCP tool.
@@ -1698,11 +1687,12 @@ export class Runs {
     run.touched = true
     run.stirredAt = now
     run.attendedAt = now
+    if (which === 'compact' && run.settled) this.gauges.manual(run.settled, now)
     run.pty.write(text)
     setTimeout(() => {
       if (!run.ended) run.pty.write('\r')
     }, ENTER_AFTER).unref?.()
-    this.log(`codex: ${text} typed into ${run.settled}, on a person's press in the page`)
+    this.log(`opencode: ${text} typed into ${run.settled}, on a person's press in the page`)
     void this.meter(run)
     return true
   }
@@ -1775,7 +1765,7 @@ export class Runs {
     if (run.what !== 'session' || !sameProject(run, root, id)) return false
     if (!run.projectId && id) run.projectId = id
     if (run.projectPath === root) return true
-    this.log(`codex: the project of ${run.settled ?? run.id} moved from ${run.projectPath} to ${root}; the session runs on, started in ${run.cwd}`)
+    this.log(`opencode: the project of ${run.settled ?? run.id} moved from ${run.projectPath} to ${root}; the session runs on, started in ${run.cwd}`)
     run.projectPath = root
     for (const viewer of run.viewers) viewer.say({ session: run.settled ?? run.id, ...movedWord(run) })
     this.changed()
@@ -1784,7 +1774,7 @@ export class Runs {
 
   /**
    * A conversation this module did not start was reported in a project — by
-   * Codex's SessionStart hook or `agents --json`. Recorded as not yet
+   * OpenCode's SessionStart hook or `agents --json`. Recorded as not yet
    * assigned (one this module runs, or one that belongs somewhere, is left as
    * it is), and every page following that project reads its list again.
    */
@@ -1798,7 +1788,7 @@ export class Runs {
     if (!written.ok) return false
     const was = before.ok ? JSON.stringify(before.value.sessions[id] ?? null) : ''
     if (JSON.stringify(written.value.sessions[id] ?? null) === was) return false
-    this.log(`codex: ${id} was reported started in ${root.value} (${via}); it is listed there as not yet assigned`)
+    this.log(`opencode: ${id} was reported started in ${root.value} (${via}); it is listed there as not yet assigned`)
     this.projects.add(root.value)
     this.changed()
     for (const follower of this.followers) if (!follower.project || follower.project === root.value) follower.sessions?.(root.value)
@@ -1807,8 +1797,8 @@ export class Runs {
 
   /**
    * What a framed page has open, as it says (`POST /api/showing`): its project, the place it
-   * stands on, and whether a Codex container is on the open kehikko. Kept until the page says
-   * otherwise or its last feed closes (`feeds`); what `$kehikot-here` takes as "on screen".
+   * stands on, and whether an OpenCode container is on the open kehikko. Kept until the page says
+   * otherwise or its last feed closes (`feeds`); what `/kehikot-here` takes as "on screen".
    */
   show(page: string, showing: Omit<Showing, 'since'> | null): boolean {
     if (!showing) {
@@ -1845,7 +1835,7 @@ export class Runs {
     this.showing.delete(page)
   }
 
-  /** The places a page has on screen in this project (resolved), with a Codex container there: the latest first, one per place. */
+  /** The places a page has on screen in this project (resolved), with an OpenCode container there: the latest first, one per place. */
   showingIn(projectPath: string): Showing[] {
     const seen = new Set<string>()
     return [...this.showing.values()]
@@ -1856,7 +1846,7 @@ export class Runs {
 
   /**
    * Every page following this project reads its list again: the record changed under it. `assigned`
-   * is `$kehikot-here` having connected a conversation to a place: the page on that place puts it on screen.
+   * is `/kehikot-here` having connected a conversation to a place: the page on that place puts it on screen.
    */
   told(projectPath: string, assigned?: { key: string; session: string }): void {
     this.changed()
@@ -1926,7 +1916,7 @@ export class Runs {
 
   /** Where what the conversation behind a token was last told is kept: beside its kit while it runs. */
   toldFileOf(token: string): string {
-    return join(this.kitOf(token) ?? join(this.options.configBase ?? tmpdir(), 'kehikot-codex-told'), 'kehikot', 'told.json')
+    return join(this.kitOf(token) ?? join(this.options.configBase ?? tmpdir(), 'kehikot-opencode-told'), 'kehikot', 'told.json')
   }
 
   /** What the conversation behind a token was last told (context.ts), in words; null when nothing is kept. */
@@ -2003,7 +1993,7 @@ export class Runs {
     if (why === 'moved' && run.cwd === run.projectPath) return 'That session already runs in its project’s folder.'
     if (run.state === 'working') return 'It is working. Restart it when it is idle.'
     run.restarting = true
-    this.log(`codex: ${run.settled ?? run.id} is ended by a person to be resumed ${why === 'doors' ? 'with the doors of its kehikko now' : `in ${run.projectPath}`}`)
+    this.log(`opencode: ${run.settled ?? run.id} is ended by a person to be resumed ${why === 'doors' ? 'with the doors of its kehikko now' : `in ${run.projectPath}`}`)
     kill(run.pty)
     return true
   }
@@ -2033,7 +2023,7 @@ export class Runs {
 
   /**
    * Where the conversation recorded as `id` is now: `id` itself, or the
-   * session Codex carried it on in (see `headOf`) — preferring one a
+   * session OpenCode carried it on in (see `headOf`) — preferring one a
    * process is holding right now.
    */
   async head(projectPath: string, id: string, running?: Running): Promise<string> {
@@ -2048,7 +2038,7 @@ export class Runs {
    * longer the one recorded, make it the one recorded — as this place's
    * current session — and tell the viewers.
    *
-   * It moves without this module doing anything: Codex resumes a
+   * It moves without this module doing anything: OpenCode resumes a
    * conversation under a new id, and a person may `/resume` another one or
    * `/clear` inside the terminal. Asked of the program itself
    * (`agents --json`, which lists each process with the session it holds, by
@@ -2078,7 +2068,7 @@ export class Runs {
 
   /**
    * The process behind a run is on another conversation now — `/resume` or `/clear` typed in it, or
-   * the conversation carried on under a new id — once Codex has a record of it: the run
+   * the conversation carried on under a new id — once OpenCode has a record of it: the run
    * follows, and so does the record. Carried on, the old id is the same conversation a step behind
    * and is replaced wherever it is; switched (a `/clear`, a `/resume` of another), the new one is
    * listed at the place and is what opens there next, and the old one stays listed. Asked from
@@ -2094,18 +2084,18 @@ export class Runs {
     if (run.ended || now === run.settled) return
     run.settled = now
     if (run.joined) run.joined = { ...run.joined, session: now }
-    this.log(`codex: the process behind ${run.id} is now on ${now} (${continued ? 'carried on from' : 'switched from'} ${was}) — recorded as its place's session`)
+    this.log(`opencode: the process behind ${run.id} is now on ${now} (${continued ? 'carried on from' : 'switched from'} ${was}) — recorded as its place's session`)
     const known = (await this.program.sessions(run.projectPath, [now])).find((one) => one.id === now)
     /* A new conversation is called what it is called, which may be nothing yet: never the old one's name. */
     run.label = known?.label || (continued ? run.label : '')
     /* Carried on: the old id is the same conversation a step behind, and is replaced wherever it is. */
     if (continued) {
       const moved = follow(run.projectPath, was, now, { label: known?.label, lastActive: known?.lastActive })
-      if (!moved.ok) this.log(`codex: ${moved.error}`)
+      if (!moved.ok) this.log(`opencode: ${moved.error}`)
     }
     if (run.at) {
       const written = attach(run.projectPath, run.at, now, { label: known?.label, lastActive: known?.lastActive })
-      if (!written.ok) this.log(`codex: ${written.error}`)
+      if (!written.ok) this.log(`opencode: ${written.error}`)
     }
     for (const viewer of run.viewers) viewer.say({ exists: true, session: now, label: run.label })
     this.changed()
@@ -2133,19 +2123,19 @@ export class Runs {
       const { open } = this.others(running, settled)
       if (open && asked.copy) copyOf = open
       else if (open) {
-        this.log(`codex: ${settled} is open in another ${this.program.name} process (pid ${open.pid ?? '?'}) — nothing was started, and the page asks`)
+        this.log(`opencode: ${settled} is open in another ${this.program.name} process (pid ${open.pid ?? '?'}) — nothing was started, and the page asks`)
         return { code: CLOSED.elsewhere, why: 'open in another process; nothing was started', elsewhere: elsewhereOf(open) }
       }
     }
 
     const able = await this.program.supports(found.file)
-    /* Asked to report only when this copy runs per-run hooks and there is somewhere to report to.
-       Otherwise the session has no state, and everything else is as it was. */
+    /* Asked to report only when this copy loads a plugin from a per-run folder and there is
+       somewhere to report to. Otherwise the session has no state, and everything else is as it was. */
     const port = this.port()
     const tells = port !== null && able.tells
     const secret = tells ? randomBytes(24).toString('hex') : null
     /* The conversation's place, on every Kehikot door it is given (see `doorConfig.ts`). A copy
-       that cannot take `-c` — or no host answering — starts with the person's own config. */
+       that cannot take a per-run folder — or no host answering — starts with the person's own config. */
     const projectId = asked.projectId ?? projectIdAt(projectPath)
     let token: string | null = null
     let doors: SessionDoor[] = []
@@ -2163,34 +2153,23 @@ export class Runs {
       if (said?.modules) present = said.modules.map((one) => one.module)
       everywhere = said?.everywhere ?? null
       if (got?.length) doors = got
-      else this.log('codex: no host gave this session its doors; it starts with the agent’s own configuration')
+      else this.log('opencode: no host gave this session its doors; it starts with the agent’s own configuration')
     }
-    /* Its folder: the skills of every module on the kehikko and its context hook, for this one
-       process, removed with it (skills.ts). Only for a copy that runs hooks: they are how the
-       session hears of them. */
-    const kit = able.plugins ? await sessionKit(doors, { base: this.options.configBase, agentsDir: this.options.agentsDir, fetch: this.options.fetch, log: this.log, token, present, everywhere }).catch((error: unknown) => {
-      this.log(`codex: the session's skills could not be written — ${error instanceof Error ? error.message : String(error)}`)
+    const settings = readSettings(projectPath)
+    /* Its folder (`OPENCODE_CONFIG_DIR`): the doors, the plugin, the skills of every module on the
+       kehikko, for this one process, removed with it (skills.ts). */
+    const kit = able.configures ? await sessionKit(doors, { base: this.options.configBase, fetch: this.options.fetch, log: this.log, token, present, everywhere, settings, tools: Boolean(able.tools) }).catch((error: unknown) => {
+      this.log(`opencode: the session's folder could not be written — ${error instanceof Error ? error.message : String(error)}`)
       return null
     }) : null
-    const hooks: HookGroup[] = tells
-      ? TELLS.map((one) => ({ event: one.event, ...(one.matcher ? { matcher: one.matcher } : {}), commands: [{ command: tellLine(one.says), timeout: 5 }] }))
-      : []
-    if (tells && kit && token) {
-      for (const event of ['SessionStart', 'UserPromptSubmit'] as const) {
-        const group = hooks.find((one) => one.event === event && !one.matcher)
-        const command = { command: `/bin/sh ${quoted(contextScriptIn(kit.dir))} ${event}`, timeout: 10 }
-        if (group) group.commands.push(command)
-        else hooks.push({ event, commands: [command] })
-      }
-    }
     /* The one sentence this module sends a conversation, once, to one a restart cut off mid-turn
-       (`recover`), when the person's setting says so. */
-    const settings = readSettings(projectPath)
+       (`recover`), when the person's setting says so. Sent by the session's plugin once it is up:
+       OpenCode's TUI takes no prompt beside `--session`. */
     let line: string | undefined
     if (settled) {
       const read = readPlaces(projectPath)
       const entry = read.ok && Object.hasOwn(read.value.sessions, settled) ? read.value.sessions[settled] : undefined
-      if (entry?.resumeLine && settings.resumeCutOff) line = RESUME_LINE
+      if (entry?.resumeLine && settings.resumeCutOff && kit && tells) line = RESUME_LINE
       /* Opened: the person is looking at it, so the Inbox line about its cut-off turn has done its work. */
       if (entry?.resumeLine || entry?.cutOff?.open.some((one) => one.kind === 'turn')) {
         markSession(projectPath, settled, (one) => {
@@ -2202,13 +2181,8 @@ export class Runs {
       }
     }
     const args = [
-      ...(settled ? this.program.resume(settled, undefined, line) : this.program.fresh(id)),
-      ...this.program.hookArgs(hooks),
-      ...(able.configures ? doorArgs(doors) : []),
-      /* Kehikot's installs this session is not given — another kehikko's kehikko-bound skills, a
-         module's that is not on this one — switched off for this one process (agentSkills.ts). */
-      ...(able.configures && kit ? disabledArgs(kit.disabled) : []),
-      /* The project's own choices of model, effort and approvals (settings.ts); nothing about the sandbox. */
+      ...(settled ? this.program.resume(settled) : this.program.fresh(id)),
+      /* The project's own choices of model and agent (settings.ts); nothing that widens a permission. */
       ...(able.configures ? sessionFlags(settings) : []),
     ]
     let pty: Pty
@@ -2222,15 +2196,20 @@ export class Runs {
         env: {
           ...this.program.environment(),
           TERM,
+          /* Everything this session is given for its one process: OpenCode reads this folder after
+             the person's own configuration, and nothing of theirs is written. */
+          ...(kit ? { OPENCODE_CONFIG_DIR: kit.dir } : {}),
           /* The secret travels here and nowhere else: not in `args`, which any process on the
              machine can list, and not in a file. */
           ...(secret ? { [TELL_ENV.port]: String(port), [TELL_ENV.secret]: secret, [TELL_ENV.session]: id } : {}),
+          ...(able.tools && kit ? { KEHIKOT_OPENCODE_TOOLS: '1' } : {}),
+          ...(line && settled ? { [SAY_ENV.line]: line, [SAY_ENV.to]: settled } : {}),
         },
       })
     } catch (error) {
-      removeKit(kit?.dir ?? null, this.options.agentsDir)
+      removeKit(kit?.dir ?? null)
       const why = error instanceof Error ? error.message : String(error)
-      this.log(`codex: could not start ${found.file} in ${projectPath} — ${why}`)
+      this.log(`opencode: could not start ${found.file} in ${projectPath} — ${why}`)
       return { code: CLOSED.failed, why: `${this.program.name} could not be started on this machine.` }
     }
 
@@ -2288,10 +2267,10 @@ export class Runs {
     }
     this.runs.set(id, run)
     this.keepWatching()
-    this.log(`codex: ${found.file} ${settled ? `resume ${settled}` : '(new)'}${tells ? ', asked to report' : ''}${doors.length ? `, ${doors.length} door${doors.length === 1 ? '' : 's'}` : ''}${kit?.skills.length ? `, ${kit.skills.length} skill${kit.skills.length === 1 ? '' : 's'}` : ''}${line ? ', told it was cut off' : ''} in ${projectPath} (pid ${pty.pid})`)
-    if (copyOf) this.log(`codex: ${settled} is open in another process (pid ${copyOf.pid ?? '?'}) and a person chose to open it here anyway`)
+    this.log(`opencode: ${found.file} ${settled ? `resume ${settled}` : '(new)'}${tells ? ', asked to report' : ''}${doors.length ? `, ${doors.length} door${doors.length === 1 ? '' : 's'}` : ''}${kit?.skills.length ? `, ${kit.skills.length} skill${kit.skills.length === 1 ? '' : 's'}` : ''}${line ? ', told it was cut off' : ''} in ${projectPath} (pid ${pty.pid})`)
+    if (copyOf) this.log(`opencode: ${settled} is open in another process (pid ${copyOf.pid ?? '?'}) and a person chose to open it here anyway`)
     if (unchecked) {
-      this.log(`codex: ${settled} was resumed without asking whether it is open elsewhere — ${unchecked === 'too-old' ? 'this copy cannot be asked' : 'the asking failed'}`)
+      this.log(`opencode: ${settled} was resumed without asking whether it is open elsewhere — ${unchecked === 'too-old' ? 'this copy cannot be asked' : 'the asking failed'}`)
       run.screen.write(uncheckedLine(this.program.name, unchecked))
     }
     this.recount(projectPath)
@@ -2316,7 +2295,7 @@ export class Runs {
     const written = homeless
       ? assign(run.projectPath, place, run.settled, { label: run.label, lastActive: this.now() })
       : attach(run.projectPath, place, run.settled, { label: run.label, lastActive: this.now() })
-    if (!written.ok) this.log(`codex: ${written.error}`)
+    if (!written.ok) this.log(`opencode: ${written.error}`)
   }
 
   private follow(run: Run): void {
@@ -2344,7 +2323,7 @@ export class Runs {
     })
     run.pty.onExit(({ exitCode }) => {
       run.ended = true
-      removeKit(run.plugin, this.options.agentsDir)
+      removeKit(run.plugin)
       if (run.idle) clearTimeout(run.idle)
       this.runs.delete(run.id)
       /* Gone: no state to show for it, and nothing held about it is still true. */
@@ -2370,7 +2349,7 @@ export class Runs {
     if (run.place) {
       /* Started here: it belongs here from its first moment, with its token. */
       const written = born(run.projectPath, run.place, run.settled, run.token, { label, lastActive: known?.lastActive })
-      if (!written.ok) this.log(`codex: ${written.error}`)
+      if (!written.ok) this.log(`opencode: ${written.error}`)
       run.place = null
       if (run.state) this.markWorking(run.projectPath, run.settled, run.state)
     } else {
@@ -2392,10 +2371,10 @@ export class Runs {
       code = done ? CLOSED.installed : CLOSED.notInstalled
       const kept = this.installs.get(run)
       why = done ? `installed at ${found.file}` : this.program.explain(kept?.output ?? '', exitCode, kept?.line ?? '')
-      this.log(`codex: the installer exited with ${exitCode}; ${found.file ?? 'no binary found'}`)
+      this.log(`opencode: the installer exited with ${exitCode}; ${found.file ?? 'no binary found'}`)
     } else {
       await this.settle(run).catch(() => {})
-      this.log(`codex: session ${run.settled ?? run.id} ended (${exitCode})`)
+      this.log(`opencode: session ${run.settled ?? run.id} ended (${exitCode})`)
     }
     for (const viewer of [...run.viewers, ...run.joining.keys()]) viewer.close(code, why)
     run.viewers.clear()
@@ -2505,15 +2484,28 @@ export class Runs {
       : 'Noted. The person is told “Research complete” when this turn ends.'
   }
 
+  /**
+   * The project of the run whose plugin asks about `session` with that run's own secret: what
+   * `/kehikot-here` believes without asking anything else (here.ts). The plugin is in the process
+   * that holds the conversation, so the conversation is that run's project's. Null otherwise.
+   */
+  vouch(session: string, secret: string | null): string | null {
+    if (!secret || !this.program.isId(session)) return null
+    for (const run of this.runs.values()) {
+      if (run.what === 'session' && !run.ended && run.secret && sameTicket(secret, run.secret)) return run.projectPath
+    }
+    return null
+  }
+
   /** A subagent finished: an item when it was research, or said so while it ran (research.ts). */
-  private async subagentDone(run: Run, agent: string, agentType: string | null): Promise<void> {
+  private subagentDone(run: Run, agent: string, agentType: string | null, said: string | null): void {
     const started = run.agents.get(agent)
     run.agents.delete(agent)
     const told = run.told && started !== undefined && run.told.at >= started ? run.told : null
     if (told) run.told = null
     let found: { event: string; label: string } | null = told ? { event: told.event, label: told.label } : null
     if (!found) {
-      const task = await (this.options.subagentTask ?? subagentTask)(agent).catch(() => null)
+      const task = taskLine(said)
       if (isResearch({ agentType, task })) found = { event: 'research-complete', label: task || (agentType ? `${agentType} subagent` : 'A subagent') }
     }
     /* Nothing to say, or the person has the session on screen and saw it finish. */
@@ -2543,9 +2535,19 @@ export class Runs {
    * the caller answers every such thing the same way, so that what is running
    * cannot be learned by asking.
    */
-  heard(session: string, secret: string | null, event: string, thread: string | null = null, agent: { id: string; type: string | null } | null = null): boolean {
+  heard(session: string, secret: string | null, event: string, thread: string | null = null, agent: { id: string; type: string | null; task?: string | null } | null = null, usage: Reported | null = null): boolean {
     const run = this.runs.get(session)
     if (!run || run.what !== 'session' || run.ended || !run.secret || !sameTicket(secret, run.secret)) return false
+    if (!WORDS.includes(event)) return true
+    /* The tokens of an answer, or a compaction (meter.ts): nothing about the session's state. */
+    if (event === 'Usage' || event === 'Compacted') {
+      const id = thread && this.program.isId(thread) ? thread : run.settled
+      if (!id) return true
+      if (event === 'Usage' && usage) this.gauges.usage(id, usage, this.now())
+      if (event === 'Compacted') this.gauges.compacted(id, this.now())
+      if (run.settled === id) void this.meter(run)
+      return true
+    }
     /* A subagent started or finished (research.ts): nothing about the session's own state, and its
        thread is the subagent's, never the conversation's. */
     if (event === 'SubagentStart' || event === 'SubagentStop') {
@@ -2554,7 +2556,7 @@ export class Runs {
         run.agents.set(agent.id, this.now())
         /* Bounded: a subagent whose stop was never heard is forgotten with the oldest. */
         if (run.agents.size > 64) run.agents.delete(run.agents.keys().next().value!)
-      } else void this.subagentDone(run, agent.id, agent.type && AGENT_TYPE.test(agent.type) ? agent.type : null)
+      } else this.subagentDone(run, agent.id, agent.type && AGENT_TYPE.test(agent.type) ? agent.type : null, agent.task ?? null)
       return true
     }
     /* A new prompt: what the last turn was tagged with, or was about to be, is over. */
@@ -2570,7 +2572,7 @@ export class Runs {
       run.turnTag = run.told
       run.told = null
     }
-    /* Which conversation the hook was in: a new one's id, which Codex chose (`learnSession`), or
+    /* Which conversation the hook was in: a new one's id, which OpenCode chose (`learnSession`), or
        another one in the same process (`/clear`, `/new`, `/resume` typed in it). */
     if (thread && this.program.isId(thread)) {
       if (!run.settled) {
@@ -2622,7 +2624,7 @@ export class Runs {
       entry.stated = { state, since: now }
       return true
     })
-    if (!written.ok) this.log(`codex: ${written.error}`)
+    if (!written.ok) this.log(`opencode: ${written.error}`)
     return now
   }
 
@@ -2630,7 +2632,7 @@ export class Runs {
     if (run.state === state) return
     /* A conversation with no turn yet is at an empty prompt: it has asked nothing (`needsYou`). */
     if (state === 'needs-you' && !hadTurn(run)) {
-      this.log(`codex: ${run.settled ?? run.id} said it is waiting before its first turn — not taken as needing anyone`)
+      this.log(`opencode: ${run.settled ?? run.id} said it is waiting before its first turn — not taken as needing anyone`)
       return
     }
     run.state = state
@@ -2777,7 +2779,7 @@ export class Runs {
       if (run.what !== 'session' || run.ended || run.rested) continue
       /* Not a view of a background session: the program is asked what that one is doing (`watch`). */
       if (run.state === 'working' && !run.joined && this.now() - run.printedAt >= this.stale) {
-        this.log(`codex: ${run.settled ?? run.id} was working and has printed nothing for ${Math.round((this.now() - run.printedAt) / 60_000)} min — its state is no longer known`)
+        this.log(`opencode: ${run.settled ?? run.id} was working and has printed nothing for ${Math.round((this.now() - run.printedAt) / 60_000)} min — its state is no longer known`)
         this.become(run, null)
       }
       if (run.looking.size > 0 || run.state === 'working' || run.state === 'needs-you') continue
@@ -2790,7 +2792,7 @@ export class Runs {
       if (quietFor < this.quiet) continue
       run.rested = true
       this.log(
-        `codex: put away ${run.settled ?? run.id}, which nobody was looking at and which had ${finished ? 'been finished' : 'printed nothing'} for ${Math.round(quietFor / 60_000)} min — its place resumes it`,
+        `opencode: put away ${run.settled ?? run.id}, which nobody was looking at and which had ${finished ? 'been finished' : 'printed nothing'} for ${Math.round(quietFor / 60_000)} min — its place resumes it`,
       )
       kill(run.pty)
       put.push(run)
@@ -2811,7 +2813,7 @@ export class Runs {
         .catch(() => {})
         .then(() => {
           if (run.ended || run.viewers.size + run.joining.size > 0 || run.touched || run.settled) return
-          this.log(`codex: ended ${run.id}, which nobody had typed into and nobody was looking at`)
+          this.log(`opencode: ended ${run.id}, which nobody had typed into and nobody was looking at`)
           kill(run.pty)
         })
     }, this.grace)
@@ -2849,7 +2851,7 @@ export class Runs {
          dismisses the question without answering it, and the session still
          needs them. */
       if (run.state === 'needs-you' && data !== '\x1b') {
-        /* What answered it went to the question, not to the prompt (Codex takes `y` with no Enter). */
+        /* What answered it went to the question, not to the prompt (OpenCode takes `y` with no Enter). */
         run.prompt = { chars: 0, sentAt: this.now() }
         this.become(run, 'working')
       }
@@ -2891,7 +2893,7 @@ export class Runs {
         env: { ...this.program.installEnvironment(this.program.environment()), TERM },
       })
     } catch (error) {
-      this.log(`codex: the installer could not be started — ${error instanceof Error ? error.message : String(error)}`)
+      this.log(`opencode: the installer could not be started — ${error instanceof Error ? error.message : String(error)}`)
       return { code: CLOSED.failed, why: 'the installer could not be started on this machine' }
     }
     const run: Run = {
@@ -2948,7 +2950,7 @@ export class Runs {
     }
     this.runs.set(INSTALL, run)
     this.installs.set(run, { line, output: '' })
-    this.log(`codex: installing, on a press in the page — ${line}`)
+    this.log(`opencode: installing, on a press in the page — ${line}`)
     run.screen.write(`$ ${line}\r\n`)
     this.follow(run)
     this.attach(run, viewer, asked.cols, asked.rows, 'install')
@@ -2957,7 +2959,7 @@ export class Runs {
 
   /**
    * End a session because a person chose to. False when nothing by that id is
-   * running. The Codex process in its pty ends with it; the conversation is kept, and its place
+   * running. The OpenCode process in its pty ends with it; the conversation is kept, and its place
    * resumes it.
    */
   end(id: string): boolean {
@@ -2974,7 +2976,7 @@ export class Runs {
     for (const run of this.runs.values()) {
       kill(run.pty)
       /* This process is going: the session's folder goes now, not when the pty says it exited. */
-      removeKit(run.plugin, this.options.agentsDir)
+      removeKit(run.plugin)
     }
   }
 }
@@ -3001,7 +3003,7 @@ function kill(pty: Pty): void {
  * The one set of runs this process has, and the socket in front of it
  * ------------------------------------------------------------------------ */
 
-const HELD = Symbol.for('kehikot.codex.runs')
+const HELD = Symbol.for('kehikot.opencode.runs')
 
 /**
  * This process's runs, found again by whoever asks.
@@ -3027,12 +3029,6 @@ export function theRuns(log: (line: string) => void = () => {}): Runs {
     screen: headless,
   })
   held[HELD] = runs
-  /* Skills a session of a process that stopped without ending them held: let go of now (agentSkills.ts). */
-  try {
-    for (const line of sweep()) log(`codex: ${line}`)
-  } catch {
-    /* Swept when the next session ends. */
-  }
 
   /* Stopping, however it is asked. `exit` covers Vite's own handling of
      SIGTERM; the signals are here for when nothing else is listening. */
@@ -3089,7 +3085,7 @@ export function serveSessions(server: Upgradable, port: number, log: (line: stri
       if (url.pathname !== SOCKET) return
       const gate = fenced({ origin: request.headers.origin, host: request.headers.host }, port)
       if (!gate.ok) {
-        log(`codex: refused an upgrade — ${gate.why}`)
+        log(`opencode: refused an upgrade — ${gate.why}`)
         /* A bare 403. Which check failed is logged here and not sent. */
         socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
         socket.destroy()
@@ -3114,9 +3110,9 @@ export function serveSessions(server: Upgradable, port: number, log: (line: stri
         ws.on('error', held.gone)
       })
     })
-    log(`codex: ready on ws://127.0.0.1:${port}${SOCKET}`)
+    log(`opencode: ready on ws://127.0.0.1:${port}${SOCKET}`)
   })().catch((error: unknown) => {
-    log(`codex: could not start — ${error instanceof Error ? error.message : String(error)}`)
+    log(`opencode: could not start — ${error instanceof Error ? error.message : String(error)}`)
   })
 }
 
@@ -3157,9 +3153,9 @@ export function sessionSockets(port: () => number, log: (line: string) => void):
         if (typeof message === 'string') ws.data.held?.heard(message)
       },
       close: (ws) => ws.data.held?.gone(),
-      refused: (why) => log(`codex: refused an upgrade — ${why}`),
+      refused: (why) => log(`opencode: refused an upgrade — ${why}`),
     },
-    listening: (bound) => log(`codex: ready on ws://127.0.0.1:${bound}${SOCKET}`),
+    listening: (bound) => log(`opencode: ready on ws://127.0.0.1:${bound}${SOCKET}`),
   }
 }
 
@@ -3228,7 +3224,7 @@ function hold(ws: Connection, runs: Runs, log: (line: string) => void): Held {
       clearTimeout(silent)
       const said = opening(text)
       if (typeof said === 'string') {
-        log(`codex: ${said}`)
+        log(`opencode: ${said}`)
         shut(CLOSED.refused, said)
         return
       }
@@ -3244,7 +3240,7 @@ function hold(ws: Connection, runs: Runs, log: (line: string) => void): Held {
           for (const waiting of early.splice(0)) heard(waiting)
         })
         .catch((error: unknown) => {
-          log(`codex: ${error instanceof Error ? error.message : String(error)}`)
+          log(`opencode: ${error instanceof Error ? error.message : String(error)}`)
           shut(CLOSED.failed, 'that could not be opened')
         })
       return

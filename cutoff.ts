@@ -1,28 +1,15 @@
 /**
- * What a conversation's own record says about how it ended: whether its last turn was still under
- * way, and whether the person has moved on since something was said about it.
+ * What a conversation's own record says about how it ended — kept from the Codex module, whose
+ * transcripts it read, for the shape the record and the page share.
  *
- * ## What is read, and it is the whole list
+ * ## What OpenCode has
  *
- * Codex 0.164.0 writes a conversation as rows of `{ timestamp, type, payload }`. Measured with a
- * scratch `CODEX_HOME` and a stand-in for the model:
- *
- *     a turn begins            event_msg  task_started   { turn_id, … }
- *     a turn ends              event_msg  task_complete  { turn_id, last_agent_message, … }
- *     Esc interrupted it       event_msg  turn_aborted   { turn_id, reason: "interrupted" }
- *     the person said          event_msg  item_completed { item: { type: "UserMessage", content } }
- *
- * A process killed mid-turn — this module's server stopping, which ends the Codex in its pty —
- * leaves a `task_started` with nothing after it. That is the whole of `midTurn`. Of what the person
- * said, only that they said something after a moment is read (`movedOn`), never what.
- *
- * ## What Codex does not have
- *
- * Claude Code writes a `<task-notification>` into a transcript for each background task that a
- * session's end cut off, and the Claude module tells the person about them. Codex's background
- * terminals are the process's own and end with it, and nothing about them is written; so the one
- * kind said here is the turn itself (`turn`), which this module adds when a restart cut one off
- * (`recover` in live.ts). `cutOffs` finds none in a transcript.
+ * OpenCode keeps conversations in a database, not in a transcript file this module reads
+ * (program.ts, `recordFile` is null), so nothing here is ever handed a transcript: `midTurn` and
+ * `movedOn` are pure functions of a text no caller has. A turn a restart cut off is told by the
+ * `working` mark this module keeps in its own record while a conversation works (`recover` in
+ * live.ts), and that is the one kind said (`turn`). OpenCode writes nothing about background work
+ * a process's end cut off, so `cutOffs` finds none.
  */
 
 /** Which way something did not finish: `turn` is a turn a restart cut off. The others are kept for the record's format. */
@@ -59,7 +46,7 @@ const rows = function* (text: string): Generator<Row> {
 
 const timeOf = (row: Row): number => (typeof row.timestamp === 'string' ? Date.parse(row.timestamp) : NaN)
 
-/** Background work a transcript says was cut off. Codex writes none (see "What Codex does not have"). */
+/** Background work a transcript says was cut off. OpenCode writes none (see "What OpenCode does not have"). */
 export function cutOffs(_text: string): CutOff[] {
   return []
 }
