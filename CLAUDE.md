@@ -1,81 +1,51 @@
-# Example — notes for agents
+# Codex — notes for agents
 
-A Kehikot module: a program with its own server, page and MCP door that a
-Kehikot host frames in a container. The whole guide is
-[Building a module](https://github.com/Jalez/kehikko-protocol/blob/main/docs/building-a-module.md);
-what follows is how THIS repository is built, and the rules a change here keeps.
-
-## Where things are
-
-| | |
-|---|---|
-| `manifest.ts` | Who the module is. `DECLARED`; the version is package.json's. |
-| `doors.ts` | Every door but the page: `/healthz`, `/mcp`, `/api/*`, the skills. Pure `answer()`; tests call it directly. |
-| `store.ts` | The only code that touches project data. |
-| `skills.ts`, `plugin/skills/<name>/SKILL.md` | The Claude Code skills offered, served with the real origin filled in. |
-| `src/header.ts`, `src/inbox.ts` | What goes in the container's header and in the Inbox: pure functions of state. |
-| `src/app.tsx` | The page. `Screen` renders from a plain `Host`, so tests need no host. |
-| `dev/stub-host.ts` | `bun run stub`: frames the module the way Kehikot does, for looking at it. |
+A Kehikot module: a terminal holding the Codex CLI session that belongs to a place (project, epic,
+picked parts, kehikko). The sibling of the Claude module (`kehikot.claude`): the same record, page
+and doors, with `program.ts` answering for Codex. README.md says what it does and why, and what
+Codex can and cannot do here.
 
 ## The rules
 
-- **Storage.** A project's data lives only under `<project>/.kehikot/<folder>/`,
-  built with the protocol's `moduleDir`/`moduleFile` in `store.ts`. No `data/`
-  folder, nothing under the home folder, nothing beside the code.
-  `test/storage-boundary.test.ts` and Kehikot's `check:storage` both fail on it.
-- **The header is the host's to draw.** Declare items (`src/header.ts`), handle
-  presses in one handler, own all the state, and declare the whole list again on
-  every change. It is one row at 380, 280 and 200 pixels: short labels (`LABEL_FIT`).
-- **A module's strings are text.** Labels, notes and reasons are drawn as text,
-  never as markup or links.
-- **Page-only writes.** Every write to `/api` carries the page's ticket
-  (`refuseTicket`); the MCP door only reads.
-- **Agents never press what is a person's.** `agents: true` goes only on a
-  harmless switch, toggle or jump; never on a run that writes, sends or
-  deletes, never on a `confirm` run.
-- **The Inbox is one record.** Report what needs the person with
-  `host.activity(items)`, whole, every time it changes; keep no list of
-  notices of your own.
-- **Ask only for what is called.** Each method needs its capability in
-  `declares.uses`; nothing else goes there.
-- **Kehikot says when it and the module do not fit.** Write no code for this.
-  From protocol 2.22.0 Kehikot compares the manifest (`declares.uses`, the
-  declarations, the protocol range) with its own protocol, and draws "<Module>
-  needs a newer Kehikot" or "<Module> needs an update" in the container, with
-  the button that fixes it. Keep `declares.uses` true, and the notice will be
-  too. A call the host is too old for comes back `host-too-old`; you may show
-  `FIT_SAYS.tooOld(since)` beside the control, after
-  `hostTooOld(error)` (`kehikot-module-protocol/client`).
-- **Plain language.** Every sentence a person reads says what happened and
-  what to do, in their words: no ids, codes or stack traces.
-
-## Working on it
-
-```
-bun test && bun run typecheck   # before every commit
-bun run check:door              # what the MCP door says about its tools
-bun run check:parts             # how the module follows the parts of an epic
-bun run stub                    # look at it, framed, without Kehikot
-```
-
-Write the test first. Starting `./run.sh` or `bun run dev` from a checkout
-registers that checkout with Kehikot on this computer when nothing else is
-registered under the id; `bun run stub` never does.
+- **Nothing in `~/.codex` is written.** Everything a session is given is per run: `-c` overrides
+  for its hooks, their trust (`hooks.state`), its MCP doors, the project's settings and the Kehikot
+  skills it is NOT given (`skills.config`, switched off); its context hook in a 0700 folder under
+  this user's temporary directory (`sessionKit`), removed with the session. Never `config.toml`,
+  never `--dangerously-bypass-hook-trust`, never a flag that touches the sandbox or approvals
+  beyond the person's own "When Codex asks before acting".
+- **Skills go in `~/.agents/skills`, by `agentSkills.ts` alone.** Codex has no per-run skills
+  folder. Only a folder carrying this module's marker (`by: 'kehikot.codex'`) is written or
+  removed; one the person made or changed never is. A session holds what it was given (`holders`)
+  until it ends; a kehikko-bound skill is installed only while a conversation whose kehikko meets
+  its needs holds it, and opens with a check of its place (`guarded`).
+- **A hook's trust is its hash** (`hookHash` in program.ts, Codex's `hook_hash`). Change a hook's
+  command or timeout and the hash follows; `test/tell.test.ts` runs the stand-in, which refuses a
+  hook whose hash does not match, as Codex does.
+- **Project data** lives only in `<project>/.kehikot/codex/` (`record.ts`, the protocol's
+  `moduleDir`/`moduleFile`).
+- **Tests never reach the real machine**: `test/setup.ts` points HOME, `CODEX_HOME`, the registry
+  and PATH at scratch. `test/stand-in/codex` (a Bun script) imitates the CLI as measured on 0.164.0.
+- **Never a browser on this Mac**; DOM tests use happy-dom.
 
 ## Releasing
 
 Kehikot installs and updates this module from its GitHub releases, not from `main`.
 Nobody tags by hand: merging the version bump is the release.
 
-1. Bump `version` in `package.json` (semver). It is the only place the version
-   is written: the manifest reads it.
+1. Bump `version` in `package.json` (semver). It is the only place the version is written.
 2. Write `notes/<version>.md`: what a person notices (see `notes/README.md`).
 3. Open a PR with both; merge it.
 4. On that push to `main`, `.github/workflows/release.yml` (the shared
    `module-release.yml` in Jalez/kehikko-desktop) sees that `package.json`'s
    version is newer than the latest `v*` tag and that the notes exist, creates
    the annotated tag `v<version>` on the merge commit, checks the notes,
-   typechecks and tests, then publishes the release "Example <version>" in the
+   typechecks and tests, then publishes the release "Codex <version>" in the
    same run. A push that keeps the version releases nothing; a newer version
    without notes fails the run. If a check fails nothing is published: fix it
    in a PR with a newer version.
+
+## Ready-built
+
+`run.sh` serves the built page (`serve.ts`, the protocol's `run`) when `dist/.kehikot-built` names
+the commit checked out, and Vite otherwise. `bun run build` makes it; a host runs that at install
+and update, never at start. Under Bun the pty is Bun's own (`pty.ts`).
