@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from 'react'
+import { NOT_COVERED, type Covered } from 'kehikot-module-protocol/client'
 import { showIsNews, type ActivityItem, type HeaderItemInput, type SharedShow } from 'kehikot-module-protocol'
 
 import { held, probeServer, type PressAnswer } from 'kehikot-module-protocol/client'
@@ -145,7 +146,7 @@ export function App() {
   )
   /* The modules on this kehikko, as one steady string: a change is what offers "Restart to load …". */
   const containers = host.containers.map((one) => one.module).sort().join(',')
-  return <Sessions theme={host.theme} at={at} cover={cover} hosted={hosted} canvasEpic={epic} containers={containers} show={shown} />
+  return <Sessions theme={host.theme} at={at} cover={cover} hosted={hosted} canvasEpic={epic} containers={containers} show={shown} covered={host.covered} />
 }
 
 /**
@@ -231,6 +232,7 @@ export function Sessions({
   canvasEpic = null,
   containers = '',
   show = null,
+  covered = NOT_COVERED,
 }: {
   theme: 'light' | 'dark'
   /** The place the canvas is about, or null when there is nothing to open. */
@@ -248,6 +250,8 @@ export function Sessions({
   containers?: string
   /** One thing another module asked to have shown here (`context.show`, protocol 2.28.0): an agent session. */
   show?: SharedShow | null
+  /** What the host's revealed header and footer cover of the page (protocol 2.42.0), for the view on screen. See `view/keep-last.ts`. */
+  covered?: Covered
 }) {
   const [views, setViews] = useState<View[]>([])
   /** Which view each place shows, by `placeId`. */
@@ -859,6 +863,7 @@ export function Sessions({
             theme={theme}
             target={{ what: 'install' }}
             shown
+            covered={covered}
             onStanding={(next) => {
               if (next.at !== 'closed') return
               if (next.code === INSTALLED) {
@@ -899,6 +904,7 @@ export function Sessions({
                   ...(one.copy ? { copy: true } : {}),
                 }}
                 shown={shown}
+                covered={shown ? covered : undefined}
                 watched={one.n === view?.n}
                 onStanding={(next) => stood(one, next)}
                 onSaid={(heard) => said(one, heard)}
