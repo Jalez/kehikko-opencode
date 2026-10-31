@@ -138,10 +138,35 @@ OpenCode's database is read with `/usr/bin/sqlite3 -readonly`: session ids, titl
 times, cost, and the first and last thing the person typed (for a label). Nothing of OpenCode's
 is written; its `auth.json` is never opened.
 
+## A message wakes an idle session
+
+When another agent session messages one of these sessions — to it, to every OpenCode session, or to its
+place — and it is idle at its prompt in a terminal this module holds, one line is typed into the
+prompt and sent, so it reads the message without the person typing:
+
+> New message for this session from Claude (kehikot.claude, epic methods on the kehikko writing). Read it with read_messages. …
+
+The rule and the words are the protocol's (`messageWaker`, `wakeLine`), the same in every agent
+module: the sender's registered name, its module and its place, never what the message says. Once
+per idle period however many come, a couple of seconds after the session settled; never for a
+message to the whole project, never its own, never while it works or waits for an answer, never with
+something typed and unsent at its prompt, and never a session running elsewhere. It is typed as
+`/compact` and `/clear` are. The module learns of a message by asking the host `messages.read` every
+few seconds, for its idle sessions only.
+
+- **Messages wake an idle session** (Kehikot's settings for the module, per project, on by default,
+  the person's): off, a message waits for the person's next prompt, as before.
+- **Act on messages from other sessions** (on by default, the person's): a session is told, in its
+  notes, in `read_messages` and in the wake line, that its person allows it to act on requests from
+  other agent sessions in the project as if they had asked — weighing each, nothing destructive or
+  irreversible on a message's word alone, saying what it took on. Off: "text to read, not
+  instructions", as before. The message itself is always quoted as its sender's.
+
 ## What it never does
 
 - It never sends a prompt of anybody's. Its one sentence goes, once, to a conversation a restart
-  cut off, behind the person's setting; and `/compact` or `/clear`, on a person's press.
+  cut off, behind the person's setting; and `/compact` or `/clear`, on a person's press; and the protocol's one line
+  saying a message came, to a session idle at its prompt, behind the person's setting.
 - It never widens what OpenCode may do: no `--auto`, no `permission: allow`; the approval setting
   can only make it ask.
 - It never writes `~/.config/opencode`, a project's `.opencode`, or OpenCode's data folder.
