@@ -219,6 +219,123 @@ describe('a conversation a restart cut off mid-turn', () => {
   })
 })
 
+describe('a restart ends only what this module held', () => {
+  const job = (dir: string, id: string, state: Active['state']): Active => ({ session: id, kind: 'background', called: 'background', handle: id.slice(0, 8), pid: 4242, cwd: dir, startedAt: 1, name: 'stand-in', state })
+
+  test('a conversation running in another process, seen working, keeps no mark, and is not cut off when it is not listed at the next start', async () => {
+    const m = machine()
+    const dir = project()
+    m.records(dir, C)
+    born(dir, HERE, C, null, { label: 'elsewhere' })
+    m.running.set(C, job(dir, C, 'working'))
+    const one = m.module()
+    one.runs.know(dir)
+    await one.runs.watch()
+    expect(one.runs.activity(dir).find((row) => row.id === C)?.state).toBe('working')
+    expect(entryOf(dir, C)?.working).toBeUndefined()
+
+    m.running.delete(C)
+    const second = m.module()
+    second.runs.know(dir)
+    await second.runs.recovered(dir)
+    expect(second.runs.activity(dir).some((row) => row.id === `cut-off:${C}`)).toBe(false)
+    expect(entryOf(dir, C)?.resumeLine).toBeUndefined()
+  })
+
+  test('a "working" mark kept for a background conversation is let go, not taken for a cut-off', async () => {
+    const m = machine()
+    const dir = project()
+    m.records(dir, A)
+    born(dir, HERE, A, null)
+    markSession(dir, A, (one) => {
+      one.background = true
+      one.working = new Date().toISOString()
+      return true
+    })
+    const second = m.module()
+    second.runs.know(dir)
+    await second.runs.recovered(dir)
+    expect(entryOf(dir, A)?.working).toBeUndefined()
+    expect(second.runs.activity(dir).some((row) => row.id === `cut-off:${A}`)).toBe(false)
+  })
+})
+
+describe('an Inbox line about a conversation ends once the person is in it', () => {
+  const MINUTE = 60_000
+  const job = (dir: string, id: string, state: Active['state']): Active => ({ session: id, kind: 'background', called: 'background', handle: id.slice(0, 8), pid: 4242, cwd: dir, startedAt: 1, name: 'stand-in', state })
+  const cut = async (clock: { at: number }) => {
+    const m = machine()
+    const dir = project()
+    m.records(dir, A)
+    born(dir, HERE, A, null, { label: 'tighten the methods' })
+    wasWorking(dir, A)
+    const first = m.module({ now: () => clock.at })
+    first.runs.know(dir)
+    await first.runs.recovered(dir)
+    const row = first.runs.activity(dir).find((one) => one.id === `cut-off:${A}`)
+    expect(row?.state).toBe('attention')
+    return { m, dir, first, since: row!.since }
+  }
+  const hasCutOff = (runs: Runs, dir: string) => runs.activity(dir).some((row) => row.id === `cut-off:${A}`)
+
+  test('a cut-off line goes at the next start when the conversation has gone to work since, outside this module', async () => {
+    const clock = { at: Date.now() }
+    const { m, dir, since } = await cut(clock)
+    markSession(dir, A, (one) => {
+      one.stated = { state: 'working', since: since + 10 * MINUTE }
+      return true
+    })
+    clock.at += 20 * MINUTE
+    const second = m.module({ now: () => clock.at })
+    second.runs.know(dir)
+    await second.runs.recovered(dir)
+    expect(hasCutOff(second.runs, dir)).toBe(false)
+    expect(entryOf(dir, A)?.cutOff?.open).toEqual([])
+  })
+
+  test('not when it went to work within moments of the line', async () => {
+    const clock = { at: Date.now() }
+    const { m, dir, since } = await cut(clock)
+    markSession(dir, A, (one) => {
+      one.stated = { state: 'working', since: since + 2000 }
+      return true
+    })
+    const second = m.module({ now: () => clock.at })
+    second.runs.know(dir)
+    await second.runs.recovered(dir)
+    expect(hasCutOff(second.runs, dir)).toBe(true)
+  })
+
+  test('it goes when the conversation is seen working in another process later', async () => {
+    const clock = { at: Date.now() }
+    const { m, dir, first } = await cut(clock)
+    clock.at += 5 * MINUTE
+    m.running.set(A, job(dir, A, 'working'))
+    await first.runs.watch()
+    await first.runs.readCutOffs(dir, true)
+    expect(hasCutOff(first.runs, dir)).toBe(false)
+  })
+
+  test('every watched project is read on the clock, not only the first one asked', async () => {
+    const clock = { at: Date.now() }
+    const { m, dir, since } = await cut(clock)
+    const other = project()
+    const one = m.module({ now: () => clock.at })
+    for (const projectPath of [other, dir]) {
+      one.runs.know(projectPath)
+      await one.runs.recovered(projectPath)
+    }
+    expect(hasCutOff(one.runs, dir)).toBe(true)
+    markSession(dir, A, (entry) => {
+      entry.stated = { state: 'working', since: since + 10 * MINUTE }
+      return true
+    })
+    clock.at += 20 * MINUTE
+    await one.runs.watch()
+    expect(hasCutOff(one.runs, dir)).toBe(false)
+  })
+})
+
 describe('the setting "Resume conversations cut off by a restart"', () => {
   test('on unless a person turned it off, and drawn as a toggle no agent can press', () => {
     const dir = project()
