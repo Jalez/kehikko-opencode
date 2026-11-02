@@ -20,6 +20,8 @@
 //     not show as typed.
 //   - It gives the session one tool, `kehikot_here`, which assigns THIS conversation to the
 //     kehikko on screen in Kehikot (POST /api/here), when the person types /kehikot-here.
+//   - Once at start, it says whether the conversation it was opened on is at its prompt (`Ready`),
+//     from OpenCode's own status list: OpenCode says nothing of an idle session before its first turn.
 //   - Once, when the module asks (KEHIKOT_OPENCODE_SAY), it sends the module's one fixed sentence to
 //     a conversation a restart cut off mid-turn.
 //
@@ -145,6 +147,27 @@ export const KehikotPlugin = async (input, options = {}) => {
     setTimeout(() => {
       input.client.session.promptAsync({ path: { id: to }, body: { parts: [{ type: 'text', text: line.slice(0, 400) }] } }).catch(() => {})
     }, options.sayAfter ?? 1500)
+  }
+
+  /*
+   * At its prompt before any turn. OpenCode says nothing of a session that is idle: its status list
+   * (`client.session.status()`, GET /session/status) holds only those busy or retrying, and
+   * `session.status` / `session.idle` come only when a turn ends. So, once the TUI has loaded this
+   * process, the conversation it was opened on (KEHIKOT_OPENCODE_OPENED) is said `Ready` when that
+   * list does not hold it — unless the module's own sentence is about to be sent to it.
+   */
+  const opened = env.KEHIKOT_OPENCODE_OPENED
+  if (SESSION.test(opened ?? '') && !(line && to === opened)) {
+    setTimeout(async () => {
+      try {
+        const listed = await input?.client?.session?.status?.()
+        const status = listed?.data?.[opened]
+        if (status && status.type !== 'idle') return
+      } catch {
+        /* Not asked: a process just started holds no turn of its own yet. */
+      }
+      if (!last.has(opened)) await say(opened, 'Ready')
+    }, options.readyAfter ?? 750)
   }
 
   const hooks = {

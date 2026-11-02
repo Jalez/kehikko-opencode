@@ -49,3 +49,11 @@ Nobody tags by hand: merging the version bump is the release.
 `run.sh` serves the built page (`serve.ts`, the protocol's `run`) when `dist/.kehikot-built` names
 the commit checked out, and Vite otherwise. `bun run build` makes it; a host runs that at install
 and update, never at start. Under Bun the pty is Bun's own (`pty.ts`).
+
+## Where a session is
+
+`run.status` (what Compact, Clear and the message waker wait on, `readiness`) is set by every
+plugin word (`WHERE` in live.ts), and before any turn by `Ready`: the plugin's word, once at start,
+for the conversation it was opened on when OpenCode's status list does not hold it. OpenCode says
+nothing of an idle session otherwise, and has no command listing sessions with a status (README,
+"Verified against OpenCode v1.19.5").

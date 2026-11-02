@@ -2395,6 +2395,65 @@ describe('a message wakes an idle session (protocol 2.43.0)', () => {
   })
 })
 
+describe('at its prompt before any turn: the plugin’s Ready (verified against the source of OpenCode v1.19.5)', () => {
+  async function resumed() {
+    const dir = project()
+    const w = world({ tells: true, port: 4999 })
+    w.records(dir, A, 'tighten the methods')
+    const run = await w.runs.open(ask(dir, A), new Watcher())
+    if (!isRun(run)) throw new Error('not opened')
+    await settle()
+    run.token = freshToken()
+    return { w, run, tell: (event: string, thread: string | null = A) => w.runs.heard(run.id, run.secret, event, thread) }
+  }
+
+  test('a resumed session’s plugin is told which conversation it was opened on, beside the secret', async () => {
+    const { w } = await resumed()
+    expect(w.ptys[0]!.options.env.KEHIKOT_OPENCODE_OPENED).toBe(A)
+  })
+
+  test('Ready makes a conversation left at its prompt wakeable and Compact pressable — and gives it no state to be noticed for', async () => {
+    const { w, run, tell } = await resumed()
+    expect(w.runs.readiness(run)).toBe('It is not known yet whether OpenCode is waiting at its prompt.')
+    expect(tell('Ready')).toBe(true)
+    expect(run.state).toBeNull()
+    expect(w.runs.readiness(run)).toBeNull()
+    expect(w.runs.wakeSessions().find((one) => one.key === run.id)?.idle).toBe(true)
+    expect(w.runs.command(run, 'compact')).toBe(true)
+  })
+
+  test('Ready of another conversation says nothing of this one', async () => {
+    const { w, run, tell } = await resumed()
+    tell('Ready', 'ses_22222222222242228222222222222222')
+    expect(w.runs.readiness(run)).toBe('It is not known yet whether OpenCode is waiting at its prompt.')
+  })
+
+  test('a line that starts no turn (no chat.message) is said as nothing: at its prompt again once quiet a while', async () => {
+    const { w, run, tell } = await resumed()
+    tell('Ready')
+    w.later(1_000)
+    w.runs.type(run, '/help\r')
+    expect(w.runs.readiness(run)).toBe('OpenCode has not been seen at its prompt since a line was sent to it.')
+    w.later(5_500)
+    expect(w.runs.readiness(run)).toBeNull()
+  })
+
+  test('a prompt is working at once and stays so however long the turn takes; an approval on screen waits', async () => {
+    const { w, run, tell } = await resumed()
+    tell('Ready')
+    w.later(1_000)
+    w.runs.type(run, 'do the thing\r')
+    tell('UserPromptSubmit')
+    w.later(60_000)
+    expect(w.runs.readiness(run)).toBe('OpenCode is working. Compact and Clear wait until it is back at its prompt.')
+    tell('PermissionRequest')
+    expect(w.runs.readiness(run)).toBe('OpenCode is waiting for an answer on screen.')
+    w.later(1_000)
+    tell('Stop')
+    expect(w.runs.readiness(run)).toBeNull()
+  })
+})
+
 describe('Compact and Clear: only at the prompt, only on a press', () => {
   const C2 = 'ses_33333333333343338333333333333333'
   const after = (ms: number) => new Promise((done) => setTimeout(done, ms))
