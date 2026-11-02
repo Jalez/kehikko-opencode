@@ -29,7 +29,7 @@ framing it: a session belongs to a project, and only a host says which.
   OpenCode's own `/sessions` and `/new` (`/clear`) work in it, and the record follows (the plugin
   names the conversation every prompt is in).
 - **Disconnect and connect again**, from the View and Go menus, as in the Codex module. No agent
-  may press them.
+  may press them. A disconnected conversation stays off every place until a person connects it again, and `/kehikot-here off` disconnects the conversation it is typed in.
 - **Filed with no command.** A conversation started here is filed under its place at its first
   prompt and is that kehikko's own when the kehikko had none. `/kehikot-here`, typed in a
   conversation this module started, assigns it to the kehikko on screen (or `kehikko: <key>`).
