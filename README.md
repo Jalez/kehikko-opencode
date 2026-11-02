@@ -63,7 +63,7 @@ framing it: a session belongs to a project, and only a host says which.
 - **Interrupted work.** A conversation a restart cut off mid-turn is a "needs you" line, and —
   unless "Resume conversations cut off by a restart" is off — is sent one sentence when its place
   is next opened (by the plugin, through OpenCode's own client: the TUI takes no prompt beside
-  `--session`).
+  `--session`). The line goes once the person is in the conversation after it: typing here, or it going to work more than 30 seconds later, wherever it runs. Only a conversation whose process this module held can be cut off: one running in another process runs on through a restart.
 - **The context meter** under the session: the window in use and where OpenCode compacts, the
   model, and **the cost** (OpenCode's own sum, from its database) — more than Codex gives. With
   **Compact** (`/compact`) and **Clear** (`/clear`) typed only on a person's press, only while
