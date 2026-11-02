@@ -171,6 +171,35 @@ few seconds, for its idle sessions only.
   can only make it ask.
 - It never writes `~/.config/opencode`, a project's `.opencode`, or OpenCode's data folder.
 
+## Verified against OpenCode v1.19.5, from its source only
+
+OpenCode is not installed on this machine, so **none of this was run against a real `opencode`**.
+It was read, on 2026-11-02, in the source at the `v1.19.5` tag of anomalyco/opencode (formerly
+sst/opencode), and the stand-in was made to do the same.
+
+- **No command lists running sessions with a status.** Which process holds a conversation is
+  `--session <id>` in `ps` (`active` in program.ts), which says no status. The `status` that list
+  could set is never set by it.
+- **An idle session is said by nothing.** `packages/opencode/src/session/status.ts`: the status list
+  holds only sessions that are `busy` or `retry`; `set(id, idle)` publishes `session.status` and
+  `session.idle` and deletes the entry; `get` of an absent id is `idle`. A turn ending is the only
+  time OpenCode says "idle". A session resumed and left at its prompt is never said to be anything.
+- **Plugins load when the instance starts.** `project/bootstrap.ts` runs `plugin.init()` while the
+  instance bootstraps, which the TUI does on start, before any prompt. The plugin's `input.client`
+  has `session.status()` (`GET /session/status`, `packages/sdk/js/src/gen/sdk.gen.ts`).
+- **What was wrong.** Compact, Clear and the message waker took "at its prompt" only from a turn's
+  end (`Stop`) or from a process list with no status, so a session started or resumed and left at
+  its prompt was never ready. Now the plugin, once at start, says `Ready` for the conversation it
+  was opened on (`KEHIKOT_OPENCODE_OPENED`) when OpenCode's status list does not hold it as busy or
+  retrying. Every word it says also sets where the session is (`status` in live.ts): `Ready`,
+  `Stop`, `Interrupt` at its prompt; `SessionStart`, `UserPromptSubmit`, `PostToolUse` working;
+  `PermissionRequest`, `AskUser` waiting. A line that starts no turn (no `chat.message`) counts as
+  back at the prompt after five quiet seconds. The Inbox state is unchanged: `Ready` is no state.
+- **The stand-in keeps the same status list** and answers `client.session.status()` from it.
+
+To check on the first real run: that `client.session.status()` answers from a plugin in TUI mode at
+start, with the resumed session absent.
+
 ## Not yet done
 
 - **A run against the real `opencode`.** OpenCode is not installed on the machine this was built

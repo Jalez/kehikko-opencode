@@ -69,8 +69,11 @@ const skills = dir && existsSync(join(dir, 'skills')) ? readdirSync(join(dir, 's
 type Hooks = Record<string, any>
 const hooks: Hooks[] = []
 const prompted: string[] = []
+/* OpenCode's status list (session/status.ts): only sessions busy or retrying; an idle one is absent. */
+const statuses = new Map<string, { type: string }>()
 const client = {
   session: {
+    status: async () => ({ data: Object.fromEntries(statuses) }),
     promptAsync: async (asked: { path: { id: string }; body: { parts: { text: string }[] } }) => {
       prompted.push(asked.body.parts.map((one) => one.text).join(''))
       out(`[prompt sent to ${asked.path.id}: ${asked.body.parts.map((one) => one.text).join('')}]\n`)
@@ -137,10 +140,12 @@ async function line(text: string, onto?: string): Promise<void> {
   db.query('update session set time_updated = ? where id = ?').run(now, id)
   const told = parts.filter((part) => part.synthetic)
   if (told.length) out(`[told: ${told.map((part) => String(part.text).split('\n')[0]).join(' | ')}]\n`)
+  statuses.set(id, { type: 'busy' })
   await event('session.status', { sessionID: id, status: { type: 'busy' } })
 }
 
 const idle = async (id: string) => {
+  statuses.delete(id)
   await event('session.status', { sessionID: id, status: { type: 'idle' } })
   await event('session.idle', { sessionID: id })
 }

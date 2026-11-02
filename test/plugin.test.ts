@@ -82,10 +82,44 @@ const nodeFetch = (url: string, init: { method?: string; headers?: Record<string
     req.end()
   })
 
-async function plugin(more: { env?: Record<string, string>; kit?: string; client?: unknown; sayAfter?: number } = {}) {
+async function plugin(more: { env?: Record<string, string>; kit?: string; client?: unknown; sayAfter?: number; readyAfter?: number } = {}) {
   heard.length = 0
-  return KehikotPlugin({ client: more.client ?? {} }, { env: more.env ?? env(), kit: more.kit ?? kitOf(), sayAfter: more.sayAfter ?? 0, fetch: nodeFetch })
+  return KehikotPlugin({ client: more.client ?? {} }, { env: more.env ?? env(), kit: more.kit ?? kitOf(), sayAfter: more.sayAfter ?? 0, readyAfter: more.readyAfter ?? 0, fetch: nodeFetch })
 }
+
+describe('at its prompt before any turn: Ready (verified against the source of OpenCode v1.19.5)', () => {
+  const pause = (ms: number) => new Promise((done) => setTimeout(done, ms))
+  /** `client.session.status()` as OpenCode answers it: only sessions busy or retrying are listed (session/status.ts). */
+  const listing = (data: Record<string, unknown>) => ({ session: { status: async () => ({ data }) } })
+
+  test('the conversation it was opened on, absent from OpenCode’s status list, is said Ready once', async () => {
+    await plugin({ env: env({ KEHIKOT_OPENCODE_OPENED: SESSION }), client: listing({}) })
+    await pause(30)
+    expect(heard.filter((one) => one.url.startsWith('/api/state')).map((one) => one.url)).toEqual([`/api/state?event=Ready&session=${RUN}&thread=${SESSION}`])
+  })
+
+  test('one OpenCode lists as busy or retrying is not; nor one the module’s own sentence is about to go to; nor any when none was opened', async () => {
+    await plugin({ env: env({ KEHIKOT_OPENCODE_OPENED: SESSION }), client: listing({ [SESSION]: { type: 'busy' } }) })
+    await pause(30)
+    expect(words()).toEqual([])
+    await plugin({ env: env({ KEHIKOT_OPENCODE_OPENED: SESSION, KEHIKOT_OPENCODE_SAY: 'Kehikot restarted.', KEHIKOT_OPENCODE_SAY_TO: SESSION }), client: listing({}), sayAfter: 10_000 })
+    await pause(30)
+    expect(words()).toEqual([])
+    await plugin({ client: listing({}) })
+    await pause(30)
+    expect(words()).toEqual([])
+  })
+
+  test('a status list that cannot be asked is a process just started: Ready all the same, unless a prompt came first', async () => {
+    await plugin({ env: env({ KEHIKOT_OPENCODE_OPENED: SESSION }), client: {} })
+    await pause(30)
+    expect(words()).toEqual(['Ready'])
+    const hooks = await plugin({ env: env({ KEHIKOT_OPENCODE_OPENED: SESSION }), client: {}, readyAfter: 20 })
+    await hooks['chat.message']({ sessionID: SESSION }, { message: { id: 'msg_1' }, parts: [] })
+    await pause(60)
+    expect(words()).toEqual(['SessionStart', 'UserPromptSubmit'])
+  })
+})
 
 describe('what the plugin says, and to whom', () => {
   test('a prompt is SessionStart then UserPromptSubmit, each one POST to this computer with the run, the conversation and the secret in a header', async () => {
@@ -262,6 +296,19 @@ describe('loaded by OpenCode from a session’s own folder (the stand-in, as a p
     expect(said).toContain('Stop')
     expect(said).toContain('Usage')
     expect(said).toContain('SubagentStop')
+    expect(out).not.toContain('Error')
+    removeKit(kit.dir)
+  }, 20_000)
+  test('a conversation it was opened on and left at its prompt is said Ready, from the stand-in’s own status list', async () => {
+    const kit = await sessionKit([], { base: scratch(), token: TOKEN, fetch: (async () => new Response('', { status: 404 })) as unknown as typeof fetch })
+    heard.length = 0
+    const child = spawn(join(import.meta.dir, 'stand-in', 'opencode'), [], { cwd: scratch(), env: { ...process.env, OPENCODE_CONFIG_DIR: kit.dir, ...env({ KEHIKOT_OPENCODE_OPENED: SESSION }) } })
+    let out = ''
+    child.stdout.on('data', (chunk) => (out += chunk))
+    for (let i = 0; i < 200 && !words().includes('Ready'); i += 1) await new Promise((done) => setTimeout(done, 25))
+    child.stdin.write('/exit\n')
+    await new Promise((done) => child.on('close', done))
+    expect(words()).toEqual(['Ready'])
     expect(out).not.toContain('Error')
     removeKit(kit.dir)
   }, 20_000)

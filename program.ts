@@ -735,6 +735,9 @@ function environment(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
  *     SubagentStart      session.created with a parentID (the task tool's child session)
  *     SubagentStop       session.status idle of such a child
  *     Usage              message.updated of a finished assistant message: tokens, cost, model (meter.ts)
+ *     Ready              the plugin's own, once at start: the conversation it was opened on is not in
+ *                        `client.session.status()` as busy or retrying (OpenCode keeps only those; idle
+ *                        is absent, and no event says it) — at its prompt before any turn
  *
  * A permission or question in a child session is said of its top-level session, which waits on it.
  * A question asked in prose is a turn that ended, `finished` like any other. A person typing into a
@@ -750,7 +753,7 @@ const SIGNALS: Record<string, State> = {
 }
 
 /** Every word the plugin may post; anything else is dropped. */
-export const WORDS: readonly string[] = ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'AskUser', 'Stop', 'Interrupt', 'Compacted', 'SubagentStart', 'SubagentStop', 'Usage']
+export const WORDS: readonly string[] = ['Ready', 'SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'AskUser', 'Stop', 'Interrupt', 'Compacted', 'SubagentStart', 'SubagentStop', 'Usage']
 
 /* ------------------------------------------------------------------------ *
  * Which process was started on which conversation
