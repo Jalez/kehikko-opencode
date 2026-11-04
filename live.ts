@@ -1893,15 +1893,15 @@ export class Runs {
   /**
    * Type messages (`typedMessages`: Kehikot's frame around each sender's words) into a session's
    * prompt as one bracketed paste and send it, through the pty the person's keys go to, exactly as
-   * Compact and Clear are typed. At its prompt, or while it works — OpenCode takes a line typed
-   * during a turn. Never into a question on screen or text the person has not sent. False when it
-   * cannot be now.
+   * Compact and Clear are typed. Only at its prompt: OpenCode's Enter during a turn would steer the
+   * message into it, and a message never steers a turn. Never into a question on screen or text the
+   * person has not sent. False when it cannot be now.
    */
   deliver(key: string, text: string): boolean {
     const run = this.runOf(key)
     if (!run || run.rested) return false
     const state = this.standing(run).state
-    if (state !== 'idle' && state !== 'busy') return false
+    if (state !== 'idle') return false
     if (!text.trim()) return false
     const now = this.now()
     run.prompt = { chars: 0, sentAt: now + ENTER_AFTER }
@@ -3350,8 +3350,10 @@ export function theRuns(log: (line: string) => void = () => {}): Runs {
   })
   held[HELD] = runs
   /* A message to a session idle at its prompt wakes it (protocol 2.43.0): the protocol's rule, typed through `wake`. */
-  /* OpenCode takes a line typed during a turn (protocol 2.48.0, docs/agent-messages.md): a working session is typed into at once. */
-  messageDelivery({ module: 'kehikot.opencode', queues: true, sessions: () => runs.deliverySessions(), type: (key, text) => runs.deliver(key, text), resume: (key, text) => runs.resumeFor(key, text), log }).start()
+  /* OpenCode's Enter steers a line typed during a turn INTO the turn; queueing it needs the person's
+     leader chord (`<leader>return`, configurable). A message never steers a turn: a working session
+     is typed into once it is back at its prompt (protocol 2.48.0, `queues: false`). */
+  messageDelivery({ module: 'kehikot.opencode', queues: false, sessions: () => runs.deliverySessions(), type: (key, text) => runs.deliver(key, text), resume: (key, text) => runs.resumeFor(key, text), log }).start()
 
   /* Stopping, however it is asked. `exit` covers Vite's own handling of
      SIGTERM; the signals are here for when nothing else is listening. */

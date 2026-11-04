@@ -2379,10 +2379,15 @@ describe('a message is typed into its session (protocol 2.48.0)', () => {
     expect(w.logged.some((line) => line.includes('typed into it'))).toBe(true)
   })
 
-  test('busy: typed at once — the program takes a line typed during a turn', async () => {
+  test('busy: never typed — OpenCode’s Enter would steer it into the turn; typed once it is back at its prompt', async () => {
     const { w, tell } = await reporting()
     tell('UserPromptSubmit')
     w.later(1_000)
+    const before = w.ptys[0]!.typed.length
+    expect(w.runs.deliver(A, TEXT)).toBe(false)
+    expect(w.ptys[0]!.typed.length).toBe(before)
+    tell('Stop')
+    w.later(2_000)
     expect(w.runs.deliver(A, TEXT)).toBe(true)
   })
 
@@ -2403,7 +2408,7 @@ describe('a message is typed into its session (protocol 2.48.0)', () => {
     w.later(2_000)
     let clock = Date.parse('2026-10-31T15:00:00.000Z')
     const h = host([msg({ body: 'first\x1b[201~\r/clear\x07' }), msg({ body: 'second' })])
-    const delivery = messageDelivery({ module: 'kehikot.opencode', queues: true, sessions: () => w.runs.deliverySessions(), type: (k, t) => w.runs.deliver(k, t), now: () => clock, read: h.read })
+    const delivery = messageDelivery({ module: 'kehikot.opencode', queues: false, sessions: () => w.runs.deliverySessions(), type: (k, t) => w.runs.deliver(k, t), now: () => clock, read: h.read })
     await delivery.tick()
     clock += 2_500
     expect(await delivery.tick()).toBe(1)
@@ -2423,13 +2428,15 @@ describe('a message is typed into its session (protocol 2.48.0)', () => {
     tell('PermissionRequest')
     let clock = Date.parse('2026-10-31T15:00:00.000Z')
     const h = host([msg()])
-    const delivery = messageDelivery({ module: 'kehikot.opencode', queues: true, sessions: () => w.runs.deliverySessions(), type: (k, t) => w.runs.deliver(k, t), now: () => clock, read: h.read })
+    const delivery = messageDelivery({ module: 'kehikot.opencode', queues: false, sessions: () => w.runs.deliverySessions(), type: (k, t) => w.runs.deliver(k, t), now: () => clock, read: h.read })
     clock += 10_000
     expect(await delivery.tick()).toBe(0)
     expect(h.reads).not.toContain(true)
     w.later(1_000)
-    tell('UserPromptSubmit')
+    tell('Stop')
     w.later(1_000)
+    await delivery.tick()
+    clock += 2_500
     expect(await delivery.tick()).toBe(1)
   })
 

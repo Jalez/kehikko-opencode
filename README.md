@@ -164,7 +164,9 @@ indented. A typed message is counted delivered: the notes and `read_messages({ u
 say it again, and `read_messages` keeps it as history.
 
 - **At its prompt**: typed a couple of seconds after the session settled.
-- **Working**: typed at once — OpenCode takes a line typed during a turn into that turn.
+- **Working**: it waits, and is typed once the session is back at its prompt. OpenCode's Enter during a
+  turn would steer the message into the running turn, and queueing it needs the person's own leader
+  chord, so a message never steers a turn.
 - **Waiting for an answer on screen, or with something typed and unsent**: never typed into; it waits.
 - **Put away, or not open since a restart**: a conversation of this module's with a place, used in
   the last day, is resumed here with no viewer and the messages typed in as its first prompt once it
