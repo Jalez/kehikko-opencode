@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
-import { WELL_KNOWN, isKehikkoBound, missingNeeds, moduleSkillsSchema, needSaid, skillPath, skillTextIssue, type EverywhereSkill, type ModuleSkill, type ProvidingManifest } from 'kehikot-module-protocol'
+import { WELL_KNOWN, isKehikkoBound, missingNeeds, moduleSkillsSchema, needSaid, skillPath, skillTextIssue, type EverywhereSkill, type KehikkoSkill, type ModuleSkill, type ProvidingManifest } from 'kehikot-module-protocol'
 import { originFor, preferred, registryDir } from 'kehikot-module-protocol/serve'
 
 import { configDirOf, mcpOf, type SessionDoor } from './doorConfig.ts'
@@ -24,7 +24,7 @@ import { DEFAULTS, permissionOf, type Settings } from './settings.ts'
  *
  *     opencode.json          the kehikko's MCP doors (`mcp`), and the skills only the person runs (`permission.skill`)
  *     plugins/kehikot.js     the plugin: state, the told notes, `kehikot_here` (plugin/opencode/kehikot.js)
- *     skills/<name>/SKILL.md the skills of the session's kehikko
+ *     skills/<name>/SKILL.md the skills of the session's kehikko, and the ones the person wrote for it
  *     kehikot/               what the plugin reads: the place token, this module's origin and registration
  *     .gitignore             written here so that OpenCode does not
  *
@@ -50,7 +50,8 @@ import { DEFAULTS, permissionOf, type Settings } from './settings.ts'
  *
  * ## Which skills
  *
- * This module's own (`kehikot-here`), every skill of every module on the session's kehikko (those
+ * First the skills the person wrote for the session's kehikko (protocol 2.53.0, `kehikkoSkills` in
+ * the host's answer), written as the host handed them: a name the person chose is theirs. Then this module's own (`kehikot-here`), every skill of every module on the session's kehikko (those
  * whose door the host gave it), read at that module's origin, and the skills the host keeps for
  * every conversation (`everywhere`, protocol 2.23.0). A kehikko-bound skill (protocol 2.12.0,
  * `needs`) only when every need is met by a module on the kehikko — judged on their manifests
@@ -216,6 +217,11 @@ export interface GatherOptions {
   settings?: Settings
   /** Whether this copy of OpenCode takes the plugin's `kehikot_here` tool (program.ts, `tools`). */
   tools?: boolean
+  /**
+   * The skills the person wrote for the session's kehikko (protocol 2.53.0), as the host handed them:
+   * each written into the folder's `skills/` as it is, before any module's.
+   */
+  kehikkoSkills?: readonly KehikkoSkill[] | null
 }
 
 /** One skill of a session, as its context lists it. */
@@ -229,6 +235,8 @@ export interface Listed {
   by: string
   /** `callable`: in the session's folder, the session's to call. Kept for the shape the page shares. */
   state: 'callable' | 'edited' | 'taken'
+  /** True for a skill the person wrote for the kehikko (protocol 2.53.0): the notes list those under their own heading. */
+  kehikko?: true
 }
 
 export interface Kit {
@@ -263,6 +271,7 @@ interface Gathered {
   module: string
   by: string
   bound: boolean
+  kehikko?: true
 }
 
 /** A skill name as OpenCode takes one (`^[a-z0-9]+(-[a-z0-9]+)*$`, at most 64). */
@@ -284,13 +293,19 @@ export async function sessionKit(doors: readonly SessionDoor[], options: GatherO
       return
     }
     if (found.has(name)) {
-      if (found.get(name)!.module !== one.module) log(`opencode: skill ${name} from ${one.module} left out — another module already offers one by that name`)
+      if (found.get(name)!.kehikko) log(`opencode: skill ${name} from ${one.module} left out — the person wrote one by that name for this kehikko`)
+      else if (found.get(name)!.module !== one.module) log(`opencode: skill ${name} from ${one.module} left out — another module already offers one by that name`)
       return
     }
     let skill = forOpenCode(one.text, name)
     /* This module's own skills are a person's to run, every one. */
     if (one.module === ID) skill = { ...skill, implicit: false }
     found.set(name, { skill, module: one.module, by: one.by, bound: one.bound })
+  }
+  /* The person's own skills for this kehikko first (protocol 2.53.0), each SKILL.md as the host handed it. */
+  for (const one of options.kehikkoSkills ?? []) {
+    if (found.has(one.name) || !SKILL_NAME.test(one.name) || one.name.length > 64 || skillTextIssue(one.text, one.name)) continue
+    found.set(one.name, { skill: { name: one.name, description: one.description, implicit: true, text: one.text }, module: 'kehikko', by: 'this kehikko', bound: false, kehikko: true })
   }
   for (const one of skillDeclarations()) take(one.name, { text: skillText(one.name)!, module: ID, by: 'OpenCode', bound: false })
 
@@ -393,7 +408,7 @@ export async function sessionKit(doors: readonly SessionDoor[], options: GatherO
   for (const [name, one] of found) {
     mkdirSync(join(dir, 'skills', name), { recursive: true, mode: 0o700 })
     writeFileSync(join(dir, 'skills', name, 'SKILL.md'), one.skill.text, { mode: 0o600 })
-    skills.push({ name, description: one.skill.description, implicit: one.skill.implicit, module: one.module, by: one.by, state: 'callable' })
+    skills.push({ name, description: one.skill.description, implicit: one.skill.implicit, module: one.module, by: one.by, state: 'callable', ...(one.kehikko ? { kehikko: true as const } : {}) })
   }
   mkdirSync(join(dir, 'plugins'), { mode: 0o700 })
   writeFileSync(join(dir, 'plugins', 'kehikot.js'), readFileSync(PLUGIN_FILE), { mode: 0o600 })
@@ -456,6 +471,7 @@ export function kitSkills(dir: string | null): Listed[] {
             module: typeof it.module === 'string' ? it.module : '',
             by: typeof it.by === 'string' ? it.by.slice(0, 80) : '',
             state: 'callable',
+            ...(it.kehikko === true ? { kehikko: true as const } : {}),
           }]
         : []
     })
@@ -471,7 +487,9 @@ const oneLine = (text: string): string => text.replace(/[\s\u0000-\u001f\u007f\u
  * OpenCode also lists to the model in its `skill` tool (all but the person's own). Null when there
  * are none.
  */
-export function skillsText(skills: readonly Listed[]): string | null {
+export function skillsText(all: readonly Listed[]): string | null {
+  /* The person's own skills for the kehikko are said by the notes, under their own heading. */
+  const skills = all.filter((one) => !one.kehikko)
   if (!skills.length) return null
   const by = (one: Listed) => (one.by ? ` (${oneLine(one.by)})` : '')
   const lines = skills.map((one) => `- \`/${one.name}\`${by(one)}: ${oneLine(one.description)}${one.implicit ? '' : ' Only when the person types it.'}`)

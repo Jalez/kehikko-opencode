@@ -2400,6 +2400,7 @@ export class Runs {
     let doors: SessionDoor[] = []
     let present: string[] = []
     let everywhere: HostPlace['everywhere'] = null
+    let kehikkoSkills: HostPlace['kehikkoSkills'] = null
     if (able.configures) {
       token = (settled ? tokenFor(projectPath, settled, freshToken) : null) ?? freshToken()
       this.issue(token, { projectPath, projectId, place: asked.place })
@@ -2411,13 +2412,15 @@ export class Runs {
       const got = said?.doors ?? (await (this.options.doors ?? hostDoors)(door).catch(() => null))
       if (said?.modules) present = said.modules.map((one) => one.module)
       everywhere = said?.everywhere ?? null
+      /* The skills the person wrote for this kehikko (protocol 2.53.0), in the same answer: written into its folder. */
+      kehikkoSkills = said?.kehikkoSkills ?? null
       if (got?.length) doors = got
       else this.log('opencode: no host gave this session its doors; it starts with the agent’s own configuration')
     }
     const settings = readSettings(projectPath)
-    /* Its folder (`OPENCODE_CONFIG_DIR`): the doors, the plugin, the skills of every module on the
-       kehikko, for this one process, removed with it (skills.ts). */
-    const kit = able.configures ? await sessionKit(doors, { base: this.options.configBase, fetch: this.options.fetch, log: this.log, token, present, everywhere, settings, tools: Boolean(able.tools) }).catch((error: unknown) => {
+    /* Its folder (`OPENCODE_CONFIG_DIR`): the doors, the plugin, the skills the person wrote for the
+       kehikko and those of every module on it, for this one process, removed with it (skills.ts). */
+    const kit = able.configures ? await sessionKit(doors, { base: this.options.configBase, fetch: this.options.fetch, log: this.log, token, present, everywhere, kehikkoSkills, settings, tools: Boolean(able.tools) }).catch((error: unknown) => {
       this.log(`opencode: the session's folder could not be written — ${error instanceof Error ? error.message : String(error)}`)
       return null
     }) : null
