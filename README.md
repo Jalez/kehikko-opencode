@@ -119,6 +119,7 @@ write it, and opencode.ai/docs (CLI, server, config, plugins, skills, MCP server
 | A conversation open in another process | **adapted, weaker** | OpenCode holds no lock per conversation. `ps` shows `opencode` processes started with `--session <id>`; one started without an id and moved to a conversation since is not seen |
 | Per-session MCP doors | **done, better** | `mcp` in the session's own `opencode.json` (0600), not on the command line |
 | Skills per session, kehikko-bound by `needs` | **done, simpler** | OpenCode has a per-run skills folder, so nothing is installed user-wide (Codex installs into `~/.agents/skills` and switches others off) |
+| The skills the person wrote for a kehikko | **done** | written into the session's own `skills/`, first, as the host handed them; one added or changed while it runs is said at the next prompt, to read with `kehikko_skills` |
 | `/kehikot-here` | **adapted, better** | the plugin's `kehikot_here` tool (it receives the session id) posts with the run's secret; no shell, no curl, no approval. Only in conversations this module started |
 | Session notes from `sessionNotes`, changes at the next prompt | **done** | `chat.message` adds them as a synthetic part; full again after `session.compacted` |
 | What this conversation was told | **done** | same View item and panel |
@@ -146,6 +147,19 @@ read-only once written — so OpenCode installs nothing into it — and removed 
 OpenCode's database is read with `/usr/bin/sqlite3 -readonly`: session ids, titles, folders,
 times, cost, and the first and last thing the person typed (for a label). Nothing of OpenCode's
 is written; its `auth.json` is never opened.
+
+## The skills the person wrote for the kehikko
+
+The person can write skills for one kehikko in Kehikot (protocol 2.53.0); the host hands them,
+each with its whole SKILL.md, in its answer to `POST /host/place`, which this module asks once
+when it starts a session. Each is written as it came into that session's own folder
+(`OPENCODE_CONFIG_DIR/skills/<name>/SKILL.md`, 0600 in the 0700 folder), before any module's, so a
+name the person chose is theirs; it goes when the session does. OpenCode finds skills there for that
+one process, so nothing is written to the person's `~/.config/opencode` or the project's
+`.opencode`. The notes list them under their own heading and count them, with every skill in the
+folder, as what the session holds (`holds`): one the person adds while it runs is said at the next
+prompt as not loaded yet, one changed as to be read again, either with `kehikko_skills` on the
+host's door; a restart loads the current ones.
 
 ## A message is typed into its session
 

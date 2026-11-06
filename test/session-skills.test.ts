@@ -1,12 +1,12 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { WELL_KNOWN, skillPath } from 'kehikot-module-protocol'
+import { WELL_KNOWN, kehikkoSkillText, skillPath } from 'kehikot-module-protocol'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import { createServer, get, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import type { SessionDoor } from '../doorConfig.ts'
+import { hostPlace, type SessionDoor } from '../doorConfig.ts'
 import { DEFAULTS } from '../settings.ts'
 import { SKILLS_HEADING, configOf, forOpenCode, kitSkills, removeKit, sessionKit, skillText, skillsText } from '../skills.ts'
 
@@ -196,5 +196,37 @@ describe('a skill written for Claude Code, said for OpenCode', () => {
     expect(said).toContain('Only when the person types it.')
     expect(skillsText([])).toBeNull()
     expect(skillText('kehikot-here')).toContain('kehikot_here')
+  })
+})
+
+describe('the skills the person wrote for the kehikko (protocol 2.53.0)', () => {
+  test('are written into the session’s folder as handed, 0600, listed as the kehikko’s, and keep a name a module also offers', async () => {
+    const mine = { name: 'browse', description: 'Mine.', text: kehikkoSkillText('browse', 'Mine.', 'The person’s own.') }
+    const one = module({ browse: { text: text('browse', 'The module’s.') } })
+    const log: string[] = []
+    const kit = await sessionKit([door('kehikot.browser', one)], { ...options({ log }), kehikkoSkills: [mine, { name: 'bad', description: 'x', text: 'no front matter' }] })
+    const file = join(kit.dir, 'skills', 'browse', 'SKILL.md')
+    expect(readFileSync(file, 'utf8')).toBe(mine.text)
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(installed(kit.dir)).not.toContain('bad')
+    expect(kitSkills(kit.dir).find((skill) => skill.name === 'browse')).toMatchObject({ kehikko: true, implicit: true, description: 'Mine.' })
+    expect(log.some((line) => line.includes('skill browse from kehikot.browser left out — the person wrote one by that name'))).toBe(true)
+    /* The model may load it: no deny. And the notes say it under its own heading, not in this list. */
+    expect(config(kit.dir).permission).toEqual({ skill: { 'kehikot-here': 'deny' } })
+    expect(skillsText(kitSkills(kit.dir))).not.toContain('browse')
+    removeKit(kit.dir)
+    expect(existsSync(kit.dir)).toBe(false)
+  })
+
+  test('come in the host’s answer to the place: each that parses, and none said by an older host', async () => {
+    const token = 'k'.repeat(32)
+    const good = { name: 'house-style', description: 'Our style.', text: kehikkoSkillText('house-style', 'Our style.', 'Short sentences.') }
+    const host = (answer: Record<string, unknown>) =>
+      (async () => ({ ok: true, status: 200, json: async () => ({ ok: true, token, doors: [], ...answer }) })) as unknown as typeof fetch
+    const env = { KEHIKOT_ORIGINS: 'http://127.0.0.1:4999' }
+    const asked = { projectPath: '/p', projectId: null, token, kehikko: 'k1' }
+    const now = await hostPlace(asked, { env, fetch: host({ kehikkoSkills: [good, { name: 'bad', description: 'x', text: 'no front matter' }] }) })
+    expect(now?.kehikkoSkills).toEqual([good])
+    expect((await hostPlace(asked, { env, fetch: host({}) }))?.kehikkoSkills).toBeNull()
   })
 })
