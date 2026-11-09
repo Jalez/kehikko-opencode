@@ -17,7 +17,7 @@ import { isKehikkoKey, kehikkoOf, placeKey, sortedParts, type Kehikko } from './
 import { cutOffs, cutOffWords, lastPrompt, midTurn, type CutOff } from './cutoff.ts'
 import { PROGRAM, WORDS, headOf, home, learnSession, recordFile, sessionName, type Active, type ActiveStatus, type Program, type Running, type State } from './program.ts'
 import { PLACE_TOKEN, assign, attach, born, byToken, follow, homeOf, isDetached, markSession, markSessions, note, projectRoot, readPlaces, readSettings, recordedIds, sighted, stayDetached, tokenFor, type NamedPlace, type PlaceEntry, type Places, type SessionEntry } from './record.ts'
-import { removeKit, sessionKit } from './skills.ts'
+import { removeKit, sessionKit, sweepKits } from './skills.ts'
 import { sessionFlags } from './settings.ts'
 import { freshToken, hostDoors, hostPlace, type DoorsAsked, type HostPlace, type SessionDoor } from './doorConfig.ts'
 import { readPlaceKey } from './place.ts'
@@ -3357,6 +3357,13 @@ export function theRuns(log: (line: string) => void = () => {}): Runs {
      leader chord (`<leader>return`, configurable). A message never steers a turn: a working session
      is typed into once it is back at its prompt (protocol 2.48.0, `queues: false`). */
   messageDelivery({ module: 'kehikot.opencode', queues: false, sessions: () => runs.deliverySessions(), type: (key, text) => runs.deliver(key, text), resume: (key, text) => runs.resumeFor(key, text), log }).start()
+  /* The folders of sessions a process that stopped without ending them left behind: removed now (skills.ts). */
+  try {
+    const swept = sweepKits()
+    if (swept) log(`opencode: removed ${swept} session folder${swept === 1 ? '' : 's'} a stopped process left behind`)
+  } catch {
+    /* Swept at the next start. */
+  }
 
   /* Stopping, however it is asked. `exit` covers Vite's own handling of
      SIGTERM; the signals are here for when nothing else is listening. */
