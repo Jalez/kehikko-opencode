@@ -1,4 +1,4 @@
-import { ACT_ON_MESSAGES_SETTING, KEHIKOT_DIR, WAKE_ON_MESSAGES_SETTING, settingValueIssue, settingsDeclarationSchema, type SettingField } from 'kehikot-module-protocol'
+import { ACT_ON_MESSAGES_SETTING, KEHIKOT_DIR, REMIND_TURN_SETTING, WAKE_ON_MESSAGES_SETTING, settingValueIssue, settingsDeclarationSchema, type SettingField } from 'kehikot-module-protocol'
 
 /**
  * OpenCode's settings as a host shows them (protocol 2.15.0, `declares.settings`), kept in the
@@ -57,6 +57,8 @@ export const SETTINGS: SettingField[] = settingsDeclarationSchema.parse([
   /* (protocol 2.43.0) The protocol's own two, the same in every agent module: a message wakes an idle session, and may be acted on. */
   WAKE_ON_MESSAGES_SETTING,
   ACT_ON_MESSAGES_SETTING,
+  /* (protocol 2.56.0) A turn that ended without saying how is reminded once, typed in when idle (`remindStalls` in live.ts). */
+  REMIND_TURN_SETTING,
 ])
 
 /** A project's settings for this module. */
@@ -69,9 +71,11 @@ export interface Settings {
   wakeOnMessages: boolean
   /** Sessions here may act on requests from other agent sessions in the project (protocol 2.43.0). */
   actOnMessages: boolean
+  /** Type one fixed reminder into an idle session whose turn ended without saying how (protocol 2.56.0). */
+  remindTurnEnd: boolean
 }
 
-export const DEFAULTS: Settings = { resumeCutOff: true, model: '', agent: '', approvals: 'default', wakeOnMessages: true, actOnMessages: true }
+export const DEFAULTS: Settings = { resumeCutOff: true, model: '', agent: '', approvals: 'default', wakeOnMessages: true, actOnMessages: true, remindTurnEnd: true }
 
 /** A model as OpenCode takes one: `provider/model`, no spaces, no quotes. */
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}\/[A-Za-z0-9][A-Za-z0-9._:@/-]{0,79}$/

@@ -70,6 +70,12 @@ framing it: a session belongs to a project, and only a host says which.
   scheduled wake-up count), has no refusal of its own (a permission is asked of the person, and a
   `deny` rule is theirs), and its `session.idle` is a bus event a plugin cannot hold back, so a
   stall cannot be sent back.
+- **The reminder after a stall** (protocol 2.56.0, `shouldRemind`, `remindStalls` in live.ts): in
+  place of sending a stall back, the protocol's one fixed line (`TURN_REMINDER`) is typed at the
+  session's idle prompt 20 s after its turn ended undeclared — once a turn, never twice without a
+  prompt of the person's between, never when they typed or sent anything since, never into a
+  question on screen. Behind the person's **Remind the agent to say how its turn ended** (on by
+  default) and **Messages wake an idle session**. What the agent then declares replaces the stall.
 - **Interrupted work.** A conversation a restart cut off mid-turn is a "needs you" line, and —
   unless "Resume conversations cut off by a restart" is off — is sent one sentence when its place
   is next opened (by the plugin, through OpenCode's own client: the TUI takes no prompt beside
