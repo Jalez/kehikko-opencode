@@ -10,7 +10,9 @@ import { EVENTS, isResearch } from '../research.ts'
 
 describe('the event', () => {
   test('is declared in the manifest, as the protocol takes it, as a case of done', () => {
-    expect(MANIFEST.events).toEqual([{ id: 'research-complete', says: 'Research complete', state: 'done', sound: 'answer' }])
+    expect(MANIFEST.events?.[0]).toEqual({ id: 'research-complete', says: 'Research complete', state: 'done', sound: 'answer' })
+    /* Beside the turn events (protocol 2.55.0), the same in every agent module. */
+    expect(MANIFEST.events?.map((one) => [one.id, one.state])).toEqual([['research-complete', 'done'], ['needs-decision', 'attention'], ['action-refused', 'attention'], ['stalled', 'attention']])
     expect(inboxEventsSchema.safeParse(EVENTS).success).toBe(true)
     expect(declaredEvent(MANIFEST.events, { state: 'done', event: 'research-complete' })?.says).toBe('Research complete')
   })

@@ -60,6 +60,16 @@ framing it: a session belongs to a project, and only a host says which.
 - **Research complete** (event `research-complete`, sound "answer"): the agent says so with
   `tell_finished`, or a subagent finishes that is OpenCode's `explore` agent or whose task reads as
   research (the task tool's child session, `session.created` with a `parentID`).
+- **How a turn ended** (protocol 2.55.0, `turnEnd`), applied when the plugin says `Stop`: an agent
+  that called `tell_finished({ event: "needs-decision", label, choices })` is an `attention` item,
+  "Needs your decision", carrying the question for the Inbox (the answer is typed into the session
+  as the person's; the next prompt withdraws it); `done` or `research-complete` is `done`; a turn
+  that declared nothing is `attention`, "Stopped without finishing" (the plain finished item when
+  the person watched it stop, or interrupted it with Esc). Not ported from the Claude module:
+  OpenCode reports nothing set up to wake a session at a turn's end (no background-task or
+  scheduled wake-up count), has no refusal of its own (a permission is asked of the person, and a
+  `deny` rule is theirs), and its `session.idle` is a bus event a plugin cannot hold back, so a
+  stall cannot be sent back.
 - **Interrupted work.** A conversation a restart cut off mid-turn is a "needs you" line, and —
   unless "Resume conversations cut off by a restart" is off — is sent one sentence when its place
   is next opened (by the plugin, through OpenCode's own client: the TUI takes no prompt beside
@@ -125,6 +135,7 @@ write it, and opencode.ai/docs (CLI, server, config, plugins, skills, MCP server
 | What this conversation was told | **done** | same View item and panel |
 | Working / needs you / finished, notices, Inbox rules | **done** | OpenCode's bus through the plugin. A permission asked by a subagent is "needs you" on its conversation |
 | Research complete, sound "answer" | **done** | `tell_finished`, or a finished `explore` subagent / research task |
+| How a turn ended: done, a decision, a stall | **done, fewer** | `tell_finished` and `Stop`; no pause (no wake count), no refused action, no sending a stall back: OpenCode reports none of them |
 | Interrupted work after a restart | **done** | the plugin sends the sentence via `client.session.promptAsync` |
 | Context meter | **done, more** | from `message.updated` and `chat.params`; **cost** from OpenCode's own sum. Before the first answer in this process a resumed conversation has no window figure |
 | Compact and Clear | **done** | `/compact`, `/clear` |
