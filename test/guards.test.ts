@@ -5,7 +5,7 @@ import { join } from 'node:path'
 
 import type { PlacedGuard } from 'kehikot-module-protocol'
 
-import { GUARDS_FRESH_MS, context, guard, guardAnswer, type ContextNeeds, type GuardNeeds } from '../context.ts'
+import { GUARDS_FRESH_MS, HANDED_OFF, context, guard, guardAnswer, handedOff, type ContextNeeds, type GuardNeeds } from '../context.ts'
 import { hostPlace, type DoorsAsked, type HostPlace } from '../doorConfig.ts'
 import { answer } from '../doors.ts'
 
@@ -41,10 +41,23 @@ describe('the answer to one shell command (guardAnswer)', () => {
     const said = guardAnswer("bun test --filter 'it''s'", [QUEUE])
     expect(said?.action).toBe('rewrite')
     if (said?.action !== 'rewrite') return
-    expect(said.command).toBe(`kehikot-queue run -- sh -c 'bun test --filter '\\''it'\\'''\\''s'\\'''`)
+    /* Handed off: the bash tool waits for its command, so the queue returns at once and tells this session. */
+    expect(said.command).toBe(`KEHIKOT_DETACH=1 kehikot-queue run -- sh -c 'bun test --filter '\\''it'\\'''\\''s'\\'''`)
     expect(said.says).toContain('Test runs (a module on this kehikko) ran this command through its own instead (guard heavy)')
+    expect(said.says).toEndWith(HANDED_OFF)
+    expect(HANDED_OFF).toContain("you'll be notified here when it finishes")
+    /* With the session's place token, the queue knows whom to tell. */
+    expect((guardAnswer('bun test', [QUEUE], false, TOKEN) as { command: string }).command).toBe(`KEHIKOT_DETACH=1 KEHIKOT_PLACE=${TOKEN} kehikot-queue run -- sh -c 'bun test'`)
     /* A script the guard names, through a package manager. */
     expect(guardAnswer('npm test', [QUEUE])?.action).toBe('rewrite')
+  })
+
+  test('a handed-off command runs in a shell with the hand-off and the place said to the command it runs, and nothing else changed', () => {
+    const run = Bun.spawnSync(['sh', '-c', handedOff(`sh -c 'echo "$KEHIKOT_DETACH:$KEHIKOT_PLACE:$1"' - 'it'\\''s'`, TOKEN)])
+    expect(run.stdout.toString()).toBe(`1:${TOKEN}:it's\n`)
+    /* A token that is not one is left out; the hand-off is still asked. */
+    expect(handedOff('x', 'no; rm -rf /')).toBe('KEHIKOT_DETACH=1 x')
+    expect(handedOff('x', null)).toBe('KEHIKOT_DETACH=1 x')
   })
 
   test('a deny refuses with the module’s reason and the escape, and wins over a rewrite in the same line', () => {
