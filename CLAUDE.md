@@ -16,7 +16,8 @@ cannot do here.
 - **Never a flag or a setting that lets OpenCode ask less**: no `--auto`, no `permission: allow`.
 - **The plugin is plain JavaScript with no imports but `node:`**, and every export of it is a
   plugin (OpenCode calls each). It reads nothing a person wrote beyond what it must pass on (a
-  subagent's task title), and speaks only to 127.0.0.1. A new word it posts goes in `WORDS`
+  subagent's task title, and a shell command the agent is about to run, for its guard — protocol
+  2.61.0, `/api/guard`), and speaks only to 127.0.0.1. A new word it posts goes in `WORDS`
   (program.ts); `test/program.test.ts` checks the two agree.
 - **OpenCode's database is read only**, with `/usr/bin/sqlite3 -readonly` (`sessionsQuery` in
   program.ts). Never `auth.json`.

@@ -11,13 +11,23 @@
 //     computer (POST /api/state): working, waiting for an answer on screen, finished, a subagent
 //     started or finished, the tokens of the last answer. It hears OpenCode's own bus (`event`)
 //     and two hooks (`chat.message`, `tool.execute.after`). The prompt, the answer, a tool's input
-//     or output are never read, carried or sent; a subagent's title (the task tool's description)
-//     is, for "Research complete".
+//     or output are never read, carried or sent — but a subagent's title (the task tool's
+//     description), for "Research complete", and a shell command, for its guard (below).
 //   - At each prompt of a top-level session it asks the module what the session is to be told —
 //     its place and the modules on its kehikko, the protocol's `sessionNotes`, in full at the first
 //     prompt and after a compaction, only what changed after that (POST /api/context) — and adds
 //     the answer to the prompt as a synthetic text part, which the model reads and the TUI does
 //     not show as typed.
+//   - Before each command of OpenCode's shell tool (`bash`), the session's own or a subagent's, it asks
+//     the module whether a module placed on the session's kehikko guards it (POST /api/guard, protocol
+//     2.61.0): the command goes in the body, to this computer only, and the module keeps none of it.
+//     A rewrite replaces `args.command` (OpenCode runs, and asks permission for, the args the hook
+//     leaves); a refusal throws, which OpenCode makes the tool's error. The module's words for the
+//     agent go with either: as the error, or before the output of the command that ran instead.
+//     No answer, any error: the command runs as written.
+//   - At the first prompt of a subagent (a child session, the task tool's) it asks what a subagent is
+//     told (`subagentNotes`: the place, the modules on its kehikko, the guards there) and adds it to
+//     that prompt the same way: a subagent starts with only its brief.
 //   - It gives the session one tool, `kehikot_here`, which assigns THIS conversation to the
 //     kehikko on screen in Kehikot (POST /api/here), when the person types /kehikot-here.
 //   - Once at start, it says whether the conversation it was opened on is at its prompt (`Ready`),
@@ -72,6 +82,11 @@ export const KehikotPlugin = async (input, options = {}) => {
   const windows = new Map()
   /** The answers whose tokens were said. */
   const counted = new Set()
+  /** Child sessions told what a subagent is told. */
+  const briefed = new Set()
+  /** What a guard said about a command it rewrote, by the tool call's id, for the command's output. */
+  const guarded = new Map()
+  const direct = (env.KEHIKOT_DIRECT ?? '') !== '' && env.KEHIKOT_DIRECT !== '0'
 
   /** One word to the module's own server. Two seconds at most; nothing back. */
   const tell = async (event, more = {}) => {
@@ -114,6 +129,34 @@ export const KehikotPlugin = async (input, options = {}) => {
     return null
   }
 
+  /**
+   * Ask the module what becomes of one shell command (protocol 2.61.0): `{ action: 'rewrite', command,
+   * says }`, `{ action: 'deny', says }`, or null — run it as written. Three seconds at most.
+   */
+  const guard = async (session, command) => {
+    if (!token || typeof command !== 'string' || !command.trim()) return null
+    for (const at of origins()) {
+      try {
+        const response = await send(`${at}/api/guard?${new URLSearchParams({ session, direct: direct ? '1' : '0' })}`, {
+          method: 'POST',
+          headers: { 'x-module-ticket': token, 'content-type': 'application/json' },
+          body: JSON.stringify({ command }),
+          signal: AbortSignal.timeout(3000),
+        })
+        if (response.status === 204) return null
+        if (!response.ok) continue
+        const said = await response.json().catch(() => null)
+        if (typeof said?.says !== 'string' || !said.says.trim()) return null
+        if (said.action === 'deny') return { action: 'deny', says: said.says }
+        if (said.action === 'rewrite' && typeof said.command === 'string' && said.command.trim()) return { action: 'rewrite', command: said.command, says: said.says }
+        return null
+      } catch {
+        /* Not there: the next. */
+      }
+    }
+    return null
+  }
+
   /** The top-level session a session belongs to: itself, or a child's parent. */
   const topOf = (id) => {
     let at = id
@@ -129,6 +172,20 @@ export const KehikotPlugin = async (input, options = {}) => {
    */
   const current = (id) => {
     if (SESSION.test(id ?? '') && !children.has(id) && !options.env) process.env.KEHIKOT_OPENCODE_SESSION = id
+  }
+
+  /** Add words to a prompt as a synthetic text part, which the model reads and the TUI does not show as typed. */
+  const addPart = (id, output, text) => {
+    if (!output?.parts || !output.message?.id) return
+    const after = output.parts.map((part) => part?.id).filter((one) => typeof one === 'string').sort().at(-1)
+    output.parts.push({
+      ...(after ? { id: `${after}kehikot` } : {}),
+      sessionID: id,
+      messageID: output.message.id,
+      type: 'text',
+      synthetic: true,
+      text,
+    })
   }
 
   const say = async (session, word, more = {}) => {
@@ -258,7 +315,16 @@ export const KehikotPlugin = async (input, options = {}) => {
 
     'chat.message': async (asked, output) => {
       const id = asked?.sessionID
-      if (!SESSION.test(id ?? '') || children.has(id)) return
+      if (!SESSION.test(id ?? '')) return
+      if (children.has(id)) {
+        /* A subagent's first prompt: what a subagent is told, asked with its conversation's id. */
+        if (briefed.has(id)) return
+        briefed.add(id)
+        if (briefed.size > 256) briefed.delete(briefed.values().next().value)
+        const notes = await context('SubagentStart', topOf(id))
+        if (notes) addPart(id, output, notes)
+        return
+      }
       current(id)
       const texts = []
       if (!started.has(id)) {
@@ -270,19 +336,40 @@ export const KehikotPlugin = async (input, options = {}) => {
       await say(id, 'UserPromptSubmit')
       const changed = await context('UserPromptSubmit', id)
       if (changed) texts.push(changed)
-      if (!texts.length || !output?.parts || !output.message?.id) return
-      const after = output.parts.map((part) => part?.id).filter((one) => typeof one === 'string').sort().at(-1)
-      output.parts.push({
-        ...(after ? { id: `${after}kehikot` } : {}),
-        sessionID: id,
-        messageID: output.message.id,
-        type: 'text',
-        synthetic: true,
-        text: texts.join('\n\n'),
-      })
+      if (texts.length) addPart(id, output, texts.join('\n\n'))
     },
 
-    'tool.execute.after': async (asked) => {
+    /*
+     * Every command of the shell tool, the session's own and its subagents', held to the guards of the
+     * modules placed on its kehikko (protocol 2.61.0). OpenCode passes the very `args` object it then
+     * runs (session/tools.ts at v1.19.5), so a rewrite is a new `args.command`, and the person's
+     * permission rules judge that command; a throw stops the call and is the tool's error.
+     */
+    'tool.execute.before': async (asked, output) => {
+      const id = asked?.sessionID
+      if (asked?.tool !== 'bash' || !SESSION.test(id ?? '') || !output?.args || typeof output.args.command !== 'string') return
+      let said = null
+      try {
+        said = await guard(topOf(id), output.args.command)
+      } catch {
+        said = null
+      }
+      if (!said) return
+      if (said.action === 'deny') throw new Error(said.says)
+      output.args.command = said.command
+      if (typeof asked.callID === 'string') {
+        guarded.set(asked.callID, said.says)
+        if (guarded.size > 256) guarded.delete(guarded.keys().next().value)
+      }
+    },
+
+    'tool.execute.after': async (asked, output) => {
+      /* The module's words beside what the command it ran instead printed. */
+      const note = typeof asked?.callID === 'string' ? guarded.get(asked.callID) : undefined
+      if (note !== undefined) {
+        guarded.delete(asked.callID)
+        if (output && typeof output.output === 'string') output.output = `Kehikot: ${note}\n\n${output.output}`
+      }
       const id = asked?.sessionID
       if (!SESSION.test(id ?? '') || children.has(id)) return
       await say(id, 'PostToolUse')

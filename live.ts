@@ -23,7 +23,8 @@ import { sessionFlags } from './settings.ts'
 import { freshToken, hostDoors, hostPlace, type DoorsAsked, type HostPlace, type SessionDoor } from './doorConfig.ts'
 import { readPlaceKey } from './place.ts'
 import { AGENT_ID, AGENT_TYPE, FOUND_MOST, isResearch, taskLine, type Found, type Told } from './research.ts'
-import { context, toldWords, type HookAnswer, type Said, type Started } from './context.ts'
+import { context, guard, toldWords, type GuardAnswer, type HookAnswer, type Said, type Started } from './context.ts'
+import type { PlacedGuard } from 'kehikot-module-protocol'
 import { ID } from './manifest.ts'
 
 /**
@@ -1192,6 +1193,8 @@ export interface RunsOptions {
  */
 export class Runs {
   readonly runs = new Map<string, Run>()
+  /** The guards the host last handed for each session token (protocol 2.61.0), for its shell commands. In memory: a restart asks again. */
+  private readonly guardsKept = new Map<string, { at: number; guards: PlacedGuard[] }>()
   private readonly program: Program
   private readonly grace: number
   private readonly quiet: number
@@ -2235,6 +2238,32 @@ export class Runs {
         told: (projectPath, assigned) => this.told(projectPath, assigned),
         log: this.log,
         later: (run, ms) => setTimeout(run, ms).unref?.(),
+        keepGuards: (one, guards) => this.keepGuards(one, guards),
+      },
+    )
+  }
+
+  private keepGuards(token: string, guards: PlacedGuard[]): void {
+    this.guardsKept.delete(token)
+    this.guardsKept.set(token, { at: Date.now(), guards })
+    /* Bounded: the oldest tokens go first. */
+    while (this.guardsKept.size > 256) this.guardsKept.delete(this.guardsKept.keys().next().value!)
+  }
+
+  /**
+   * The plugin's `tool.execute.before` for the bash tool (`POST /api/guard`, see `guard` in
+   * context.ts): what becomes of one command, the session's or a subagent's, under the guards of the
+   * modules placed on its kehikko. Null: run it as written.
+   */
+  async guard(session: string, token: string | null, command: unknown, direct: boolean): Promise<GuardAnswer | null> {
+    return guard(
+      { session, token, command, direct },
+      {
+        program: this.program,
+        startedOf: (one) => this.startedOf(one),
+        host: (asked) => (this.options.place ?? hostPlace)(asked),
+        keptGuards: (one) => this.guardsKept.get(one) ?? null,
+        keepGuards: (one, guards) => this.keepGuards(one, guards),
       },
     )
   }
