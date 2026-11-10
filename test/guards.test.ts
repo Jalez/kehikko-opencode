@@ -5,7 +5,10 @@ import { join } from 'node:path'
 
 import type { PlacedGuard } from 'kehikot-module-protocol'
 
-import { GUARDS_FRESH_MS, HANDED_OFF, context, guard, guardAnswer, handedOff, type ContextNeeds, type GuardNeeds } from '../context.ts'
+import { GUARDS_FRESH_MS, HANDED_OFF, UNKNOWN, context, guard, guardAnswer, handedOff, type ContextNeeds, type GuardAnswer, type GuardNeeds } from '../context.ts'
+
+/** What a guard answer does: its action, or the answer itself when it is none (null, or not known). */
+const actionOf = (said: GuardAnswer | null | typeof UNKNOWN) => (said && said !== UNKNOWN ? said.action : said)
 import { hostPlace, type DoorsAsked, type HostPlace } from '../doorConfig.ts'
 import { answer } from '../doors.ts'
 
@@ -99,12 +102,12 @@ describe('the guard door (guard): the guards of the modules placed on the sessio
     let guards = [QUEUE]
     const { n, asked } = needs(async () => placed(guards), clock)
     const first = await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, n)
-    expect(first?.action).toBe('rewrite')
+    expect(actionOf(first)).toBe('rewrite')
     expect(asked).toEqual([{ projectPath: project, projectId: null, token: TOKEN, kehikko: 'wide', messages: false }])
     /* The module is taken off the kehikko: the host stops handing its guard. Within 30 s the kept list still holds. */
     guards = []
     clock.now += GUARDS_FRESH_MS - 1
-    expect((await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, n))?.action).toBe('rewrite')
+    expect(actionOf(await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, n))).toBe('rewrite')
     expect(asked).toHaveLength(1)
     clock.now += 2
     expect(await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, n)).toBeNull()
@@ -118,7 +121,12 @@ describe('the guard door (guard): the guards of the modules placed on the sessio
 
     const gone = needs(async () => null, clock)
     gone.kept.set(TOKEN, { at: -GUARDS_FRESH_MS * 2, guards: [NO_TSC] })
-    expect((await guard({ session: SESSION, token: TOKEN, command: 'tsc' }, gone.n))?.action).toBe('deny')
+    expect(actionOf(await guard({ session: SESSION, token: TOKEN, command: 'tsc' }, gone.n))).toBe('deny')
+
+    /* The host away (Kehikot restarting) and nothing kept: not known, so not "no guards" — /api/guard says 503 and the plugin asks again. */
+    const away = needs(async () => null, clock)
+    expect(await guard({ session: SESSION, token: TOKEN, command: 'tsc' }, away.n)).toBe(UNKNOWN)
+    expect(away.kept.size).toBe(0)
 
     const none = needs(async () => placed([QUEUE]), clock)
     expect(await guard({ session: SESSION, token: null, command: 'bun test' }, none.n)).toBeNull()

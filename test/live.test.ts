@@ -8,8 +8,9 @@ import { join } from 'node:path'
 import { listing, runOf, type Listing } from '../doors.ts'
 import { CLOSED, Runs, activityRows, sameProject, TELL_ENV, TICKET, fenced, headless, opening, readPlace, sayable, type Follower, type Notice, type Opening, type Pty, type Run, type Stated, type Viewer } from '../live.ts'
 import { placeKey } from '../place.ts'
-import { RESEARCH_LINE, SELF as CONTEXT_SELF } from '../context.ts'
-import { KEHIKKO_SKILLS_HEAD, NOTES_VERSION, UPDATED_HEAD, finishLine, kehikkoSkillText, sessionNotes, type AbsentModule, type KehikkoSkill } from 'kehikot-module-protocol'
+import { RESEARCH_LINE, SELF as CONTEXT_SELF, type GuardAnswer } from '../context.ts'
+import { readKeptGuards } from '../restarted.ts'
+import { KEHIKKO_SKILLS_HEAD, NOTES_VERSION, UPDATED_HEAD, finishLine, kehikkoSkillText, sessionNotes, type AbsentModule, type KehikkoSkill, type PlacedGuard } from 'kehikot-module-protocol'
 import { freshToken } from '../doorConfig.ts'
 import { TURN_REMINDER, activityItemsSchema } from 'kehikot-module-protocol'
 import { PROGRAM, type Active, type Program, type Recorded } from '../program.ts'
@@ -2151,6 +2152,56 @@ describe('a session started here knows its place and its kehikko’s modules, an
     expect(readFileSync(join(kit, 'kehikot', 'origin'), 'utf8')).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/)
     expect(w.ptys[0]!.args.join(' ')).not.toContain(token)
     expect(JSON.stringify(w.ptys[0]!.options.env)).not.toContain(token)
+  })
+
+  /** Queue's guard, its CLI named as the host hands it, and a host that hands it until it goes `down`. */
+  const QUEUE_GUARD: PlacedGuard = { module: 'kehikot.queue', name: 'Test runs', guard: { id: 'heavy', tool: 'shell', match: { commands: ['bun test'] }, action: 'rewrite', rewrite: "'/Users/x/Application Support/queue/bin/kehikot-queue' run --guard -- sh -c {command}", why: 'Heavy runs wait their turn.' } }
+  const guarded = (h: ReturnType<typeof host>, state: { down: boolean }) => ({
+    ...h,
+    place: async (one: DoorsAsked): Promise<HostPlace | null> => {
+      if (state.down) throw new Error('ECONNREFUSED')
+      const answer = await h.place(one)
+      return answer ? { ...answer, guards: [QUEUE_GUARD] } : null
+    },
+  })
+
+  test('Kehikot away and nothing kept: the guards are not known — the plugin asks again — never taken for "no guards"; once kept, on disk in its folder too', async () => {
+    const dir = project()
+    const state = { down: false }
+    const { w, token, run } = await started(guarded(host([NOTES]), state), dir)
+    state.down = true
+    expect(await w.runs.guard(B, token, 'bun test', false)).toBe('unknown')
+    state.down = false
+    expect(((await w.runs.guard(B, token, 'bun test', false)) as GuardAnswer | null)?.action).toBe('rewrite')
+    expect(readKeptGuards(join(run.plugin!, 'kehikot', 'guards.json'))?.guards).toEqual([QUEUE_GUARD])
+  })
+
+  test('a session that outlived a restart is told once, at its next prompt, that its tools may be gone, how to queue from the shell and how the person reconnects them', async () => {
+    const dir = project()
+    const { w, token, run } = await started(guarded(host([NOTES]), { down: false }), dir)
+    await w.runs.context('SessionStart', B, token)
+    expect(said(await w.runs.context('UserPromptSubmit', B, token)) ?? '').not.toContain('Kehikot restarted')
+    /* The marker an earlier process of this module left: it started again in between. */
+    writeFileSync(join(run.plugin!, 'kehikot', 'boot'), '1-1')
+    const told = said(await w.runs.context('UserPromptSubmit', B, token))!
+    expect(told).toContain('Kehikot restarted since your last turn')
+    expect(told).toContain("`'/Users/x/Application Support/queue/bin/kehikot-queue' run --kind verify -- <command>`")
+    expect(told).toContain('/mcps')
+    expect(said(await w.runs.context('UserPromptSubmit', B, token)) ?? '').not.toContain('Kehikot restarted')
+    /* A start after a restart has its tools: marked, not told. */
+    writeFileSync(join(run.plugin!, 'kehikot', 'boot'), '1-1')
+    expect(said(await w.runs.context('SessionStart', B, token)) ?? '').not.toContain('Kehikot restarted')
+    expect(said(await w.runs.context('UserPromptSubmit', B, token)) ?? '').not.toContain('Kehikot restarted')
+  })
+
+  test('its folder names Kehikot’s stable address for this module when the doors are written on it, and none when they are not', async () => {
+    const h = host([NOTES])
+    const doors = h.doors
+    const stable = { ...h, doors: async (one: DoorsAsked) => (await doors(one)).map((door) => ({ ...door, url: `http://127.0.0.1:4170/m/${door.module}/mcp?kehikot-place=${one.token}` })) }
+    const { run } = await started(stable, project())
+    expect(readFileSync(join(run.plugin!, 'kehikot', 'stable'), 'utf8')).toBe('http://127.0.0.1:4170/m/kehikot.opencode')
+    const { run: plain } = await started(host([NOTES]), project())
+    expect(existsSync(join(plain.plugin!, 'kehikot', 'stable'))).toBe(false)
   })
 
   test('the skills the person wrote for its kehikko are in its own folder, 0600, held, and said in its notes; one added later is said with where to read it; the folder goes with it', async () => {

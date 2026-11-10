@@ -8,6 +8,7 @@ import { originFor, preferred, registryDir } from 'kehikot-module-protocol/serve
 import { configDirOf, mcpOf, type SessionDoor } from './doorConfig.ts'
 import { ID, PREFERRED_PORT } from './manifest.ts'
 import { PLACE_TOKEN } from './record.ts'
+import { stableAddress } from './restarted.ts'
 import { DEFAULTS, permissionOf, type Settings } from './settings.ts'
 
 /**
@@ -25,7 +26,7 @@ import { DEFAULTS, permissionOf, type Settings } from './settings.ts'
  *     opencode.json          the kehikko's MCP doors (`mcp`), and the skills only the person runs (`permission.skill`)
  *     plugins/kehikot.js     the plugin: state, the told notes, `kehikot_here` (plugin/opencode/kehikot.js)
  *     skills/<name>/SKILL.md the skills of the session's kehikko, and the ones the person wrote for it
- *     kehikot/               what the plugin reads: the place token, this module's origin and registration
+ *     kehikot/               what the plugin reads: the place token, this module's origin and registration, Kehikot's stable address for it
  *     .gitignore             written here so that OpenCode does not
  *
  * The folder itself is made read-only (0500) once written: OpenCode installs `@opencode-ai/plugin`
@@ -422,6 +423,9 @@ export async function sessionKit(doors: readonly SessionDoor[], options: GatherO
     writeFileSync(join(dir, 'kehikot', 'token'), options.token, { mode: 0o600 })
     writeFileSync(join(dir, 'kehikot', 'origin'), served, { mode: 0o600 })
     writeFileSync(join(dir, 'kehikot', 'registration'), options.registration ?? join(registryDir(), `${ID}.json`), { mode: 0o600 })
+    /* Kehikot's stable address for this module (restarted.ts): asked first by the plugin, so a module that came back on another port is found through the host. */
+    const stable = stableAddress(doors, ID)
+    if (stable) writeFileSync(join(dir, 'kehikot', 'stable'), stable, { mode: 0o600 })
   }
   /* Read-only from here on: OpenCode writes nothing into it (see "One folder per session"). */
   for (const sub of ['skills', 'plugins']) lock(join(dir, sub))

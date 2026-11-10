@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { spawn } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, utimesSync, writeFileSync } from 'node:fs'
 import { createServer, request as httpRequest, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -95,9 +95,9 @@ const nodeFetch = (url: string, init: { method?: string; headers?: Record<string
     req.end(init.body)
   })
 
-async function plugin(more: { env?: Record<string, string>; kit?: string; client?: unknown; sayAfter?: number; readyAfter?: number } = {}) {
+async function plugin(more: { env?: Record<string, string>; kit?: string; client?: unknown; sayAfter?: number; readyAfter?: number; guardEvery?: number } = {}) {
   heard.length = 0
-  return KehikotPlugin({ client: more.client ?? {} }, { env: more.env ?? env(), kit: more.kit ?? kitOf(), sayAfter: more.sayAfter ?? 0, readyAfter: more.readyAfter ?? 0, fetch: nodeFetch })
+  return KehikotPlugin({ client: more.client ?? {} }, { env: more.env ?? env(), kit: more.kit ?? kitOf(), sayAfter: more.sayAfter ?? 0, readyAfter: more.readyAfter ?? 0, fetch: nodeFetch, ...(more.guardEvery !== undefined ? { guardEvery: more.guardEvery } : {}) })
 }
 
 describe('at its prompt before any turn: Ready (verified against the source of OpenCode v1.19.5)', () => {
@@ -266,7 +266,145 @@ describe('what the plugin says, and to whom', () => {
       mkdirSync(join(gone, 'kehikot'))
       writeFileSync(join(gone, 'kehikot', 'token'), TOKEN)
       writeFileSync(join(gone, 'kehikot', 'origin'), 'http://127.0.0.1:9')
-      await untouched(await plugin({ kit: join(gone, 'kehikot') }), 'tsc')
+      await untouched(await plugin({ kit: join(gone, 'kehikot'), env: env({ KEHIKOT_GUARD_WAIT: '0' }) }), 'tsc')
+    })
+  })
+
+  describe('guards while Kehikot restarts: the stable address, then the registration, then the origin; waited for, never skipped silently', () => {
+    const call = (command: unknown, callID = 'call_1') => ({ input: { tool: 'bash', sessionID: SESSION, callID }, output: { args: { command, description: 'd' } } })
+    /** A port nothing listens on. */
+    const deadPort = async () => {
+      const closed = createServer()
+      await new Promise<void>((done) => closed.listen(0, '127.0.0.1', done))
+      const at = (closed.address() as AddressInfo).port
+      await new Promise((done) => closed.close(done))
+      return at
+    }
+    /** A server answering `/…/api/guard` by `answer(n)`, n the asks so far: a status, or the stand-in module's answer (`module`). */
+    const servers: Server[] = []
+    afterAll(() => {
+      for (const one of servers) one.close()
+    })
+    const serve = async (answer: (n: number) => number | 'module', at = 0) => {
+      const asked: string[] = []
+      const one = createServer(async (request, response) => {
+        for await (const _ of request) void _
+        asked.push(request.url ?? '')
+        const said = answer(asked.length)
+        if (said === 'module') {
+          response.setHeader('content-type', 'application/json')
+          return void response.end(JSON.stringify({ action: 'rewrite', command: 'queue run -- x', says: 'Queue ran this command through its own instead.' }))
+        }
+        response.writeHead(said).end()
+      })
+      servers.push(one)
+      await new Promise<void>((done) => one.listen(at, '127.0.0.1', done))
+      return { port: (one.address() as AddressInfo).port, asked }
+    }
+    /** A session's `kehikot/` folder naming these places. */
+    const kitAt = (where: { origin: string; stable?: string; registration?: string }) => {
+      const dir = scratch()
+      mkdirSync(join(dir, 'kehikot'))
+      writeFileSync(join(dir, 'kehikot', 'token'), TOKEN)
+      writeFileSync(join(dir, 'kehikot', 'origin'), where.origin)
+      if (where.stable) writeFileSync(join(dir, 'kehikot', 'stable'), where.stable)
+      if (where.registration) {
+        writeFileSync(join(dir, 'registration.json'), JSON.stringify({ url: where.registration }))
+        writeFileSync(join(dir, 'kehikot', 'registration'), join(dir, 'registration.json'))
+      }
+      return join(dir, 'kehikot')
+    }
+
+    test('nobody answers: asked again until the wait runs out, then the command runs as written and the agent is told it ran unguarded and how to queue', async () => {
+      const kit = kitAt({ origin: `http://127.0.0.1:${await deadPort()}` })
+      const hooks = await plugin({ kit, env: env({ KEHIKOT_GUARD_WAIT: '1' }), guardEvery: 100 })
+      const { input, output } = call('bun test')
+      const began = Date.now()
+      await hooks['tool.execute.before'](input, output)
+      expect(Date.now() - began).toBeGreaterThanOrEqual(1000)
+      expect(output.args.command).toBe('bun test')
+      const result = { title: 't', output: 'ok', metadata: {} }
+      await hooks['tool.execute.after'](input, result)
+      expect(result.output).toStartWith('Kehikot: Kehikot did not answer (it may be restarting), so this command ran without the guards')
+      expect(result.output).toContain('`kehikot-queue run -- <command>` in the background')
+      expect(result.output).toEndWith('\n\nok')
+      expect(existsSync(join(kit, 'away'))).toBe(true)
+    })
+
+    test('the module back on a new port within the wait is found through its registration, and its guard applies', async () => {
+      const later = await deadPort()
+      const kit = kitAt({ origin: `http://127.0.0.1:${await deadPort()}`, registration: `http://127.0.0.1:${later}` })
+      const hooks = await plugin({ kit, env: env({ KEHIKOT_GUARD_WAIT: '10' }), guardEvery: 50 })
+      const { input, output } = call('bun test')
+      setTimeout(() => void serve(() => 'module', later), 300)
+      await hooks['tool.execute.before'](input, output)
+      expect(output.args.command).toBe('queue run -- x')
+      expect(existsSync(join(kit, 'away'))).toBe(false)
+    })
+
+    test('Kehikot’s stable address is asked first, and its 503 while the module comes up is waited out', async () => {
+      const host = await serve((n) => (n <= 2 ? 503 : 'module'))
+      const kit = kitAt({ origin: `http://127.0.0.1:${await deadPort()}`, stable: `http://127.0.0.1:${host.port}/m/kehikot.opencode` })
+      const hooks = await plugin({ kit, env: env({ KEHIKOT_GUARD_WAIT: '10' }), guardEvery: 50 })
+      const { input, output } = call('bun test')
+      await hooks['tool.execute.before'](input, output)
+      expect(output.args.command).toBe('queue run -- x')
+      expect(host.asked).toHaveLength(3)
+      expect(host.asked[0]).toBe(`/m/kehikot.opencode/api/guard?session=${SESSION}&direct=0`)
+    })
+
+    test('the module’s own 503 (its host away, no guards kept) is asked again; any other refusal from everyone passes quietly', async () => {
+      const module = await serve((n) => (n === 1 ? 503 : 'module'))
+      const hooks = await plugin({ kit: kitAt({ origin: `http://127.0.0.1:${module.port}` }), env: env({ KEHIKOT_GUARD_WAIT: '10' }), guardEvery: 50 })
+      const first = call('bun test')
+      await hooks['tool.execute.before'](first.input, first.output)
+      expect(first.output.args.command).toBe('queue run -- x')
+      expect(module.asked).toHaveLength(2)
+
+      const odd = await serve(() => 418)
+      const quiet = await plugin({ kit: kitAt({ origin: `http://127.0.0.1:${odd.port}` }), env: env({ KEHIKOT_GUARD_WAIT: '10' }), guardEvery: 50 })
+      const second = call('bun test')
+      await quiet['tool.execute.before'](second.input, second.output)
+      expect(second.output.args.command).toBe('bun test')
+      expect(odd.asked).toHaveLength(1)
+      const result = { title: 't', output: 'ok', metadata: {} }
+      await quiet['tool.execute.after'](second.input, result)
+      expect(result.output).toBe('ok')
+    })
+
+    test('while Kehikot stays away (the marker, five minutes) a command asks once and does not wait; an answer clears the marker', async () => {
+      const dead = await deadPort()
+      const kit = kitAt({ origin: `http://127.0.0.1:${dead}` })
+      writeFileSync(join(kit, 'away'), '')
+      const hooks = await plugin({ kit, env: env({ KEHIKOT_GUARD_WAIT: '20' }), guardEvery: 50 })
+      const { input, output } = call('bun test')
+      const began = Date.now()
+      await hooks['tool.execute.before'](input, output)
+      expect(Date.now() - began).toBeLessThan(1000)
+      const result = { title: 't', output: 'ok', metadata: {} }
+      await hooks['tool.execute.after'](input, result)
+      expect(result.output).toContain('ran without the guards')
+      /* An old marker is no marker: the wait holds again. */
+      const old = new Date(Date.now() - 6 * 60_000)
+      utimesSync(join(kit, 'away'), old, old)
+      const waited = await plugin({ kit, env: env({ KEHIKOT_GUARD_WAIT: '1' }), guardEvery: 100 })
+      const again = call('bun test', 'call_2')
+      const start = Date.now()
+      await waited['tool.execute.before'](again.input, again.output)
+      expect(Date.now() - start).toBeGreaterThanOrEqual(1000)
+      /* Back: an answer clears it. */
+      const back = await serve(() => 'module', dead)
+      await hooks['tool.execute.before'](call('bun test', 'call_3').input, call('bun test', 'call_3').output)
+      expect(back.asked).toHaveLength(1)
+      expect(existsSync(join(kit, 'away'))).toBe(false)
+    })
+
+    test('the prompt path asks Kehikot’s stable address first too', async () => {
+      const host = await serve(() => 204)
+      const hooks = await plugin({ kit: kitAt({ origin: `http://127.0.0.1:${port}`, stable: `http://127.0.0.1:${host.port}/m/kehikot.opencode` }) })
+      const output = { message: { id: 'msg_1' }, parts: [{ id: 'prt_1', type: 'text', text: 'hi' }] }
+      await hooks['chat.message']({ sessionID: SESSION }, output)
+      expect(host.asked[0]).toStartWith('/m/kehikot.opencode/api/context?event=SessionStart')
     })
   })
 
