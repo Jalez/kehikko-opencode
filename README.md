@@ -31,8 +31,11 @@ framing it: a session belongs to a project, and only a host says which.
 - **Disconnect and connect again**, from the View and Go menus, as in the Codex module. No agent
   may press them. A disconnected conversation stays off every place until a person connects it again, and `/kehikot-here off` disconnects the conversation it is typed in.
 - **Filed with no command.** A conversation started here is filed under its place at its first
-  prompt and is that kehikko's own when the kehikko had none. `/kehikot-here`, typed in a
-  conversation this module started, assigns it to the kehikko on screen (or `kehikko: <key>`).
+  prompt and is that kehikko's own when the kehikko had none. That holds at any container size: in a box too small for a terminal the session is started behind
+  the tile all the same, so the tile shows a real one. Until it is spoken to, the bar above it says
+  so ("A new OpenCode conversation: it becomes this kehikko's own…") rather than that nothing is
+  connected; `/kehikot-here` is only for a conversation started elsewhere.
+  Typed in a conversation, `/kehikot-here` assigns it to the kehikko on screen (or `kehikko: <key>`).
 - **It knows where it is.** At its first prompt — and the first after a compaction — a session is
   told its place, one line per module on the kehikko (name, door, its `agentSays` or summary, its
   skills), the installed modules absent from this kehikko that say something there, and its own
