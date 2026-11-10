@@ -1,7 +1,7 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
-import { researchLine, sessionNotes, type NotesPlace, type NotesTold } from 'kehikot-module-protocol'
+import { guardDecision, guardSays, researchLine, sessionNotes, subagentNotes, type NotesPlace, type NotesTold, type PlacedGuard } from 'kehikot-module-protocol'
 
 import type { DoorsAsked, HostPlace } from './doorConfig.ts'
 import { ID } from './manifest.ts'
@@ -74,10 +74,16 @@ export interface ContextNeeds {
   kitOf?(token: string): string | null
   /** Run something a moment later: the filing is tried again while OpenCode writes its record. Absent: not again. */
   later?(run: () => void, ms: number): void
+  /** Keep the guards the host handed for a token's session (protocol 2.61.0), for its shell commands (`guard`). Absent: not kept. */
+  keepGuards?(token: string, guards: PlacedGuard[]): void
 }
 
-export type ContextEvent = 'SessionStart' | 'UserPromptSubmit'
-const EVENTS: readonly ContextEvent[] = ['SessionStart', 'UserPromptSubmit']
+/**
+ * `SubagentStart` is not an OpenCode event: it is what the plugin asks at the first prompt of a child
+ * session (the task tool's), whose `chat.message` OpenCode runs like any other (protocol 2.61.0).
+ */
+export type ContextEvent = 'SessionStart' | 'UserPromptSubmit' | 'SubagentStart'
+const EVENTS: readonly ContextEvent[] = ['SessionStart', 'UserPromptSubmit', 'SubagentStart']
 
 /** What a hook prints for OpenCode to add to the model's context. */
 export interface HookAnswer {
@@ -241,6 +247,7 @@ export async function context(asked: { event: string; session: string; token: st
   const event = EVENTS.find((one) => one === asked.event)
   const { session, token } = asked
   if (!event || !needs.program.isId(session) || !token || !PLACE_TOKEN.test(token)) return null
+  if (event === 'SubagentStart') return subagentContext(session, token, needs)
   const started = needs.startedOf(token)
   if (!started) return null
   const root = projectRoot(started.projectPath)
@@ -262,6 +269,8 @@ export async function context(asked: { event: string; session: string; token: st
   const kehikko = place?.kehikko && 'key' in place.kehikko ? place.kehikko.key : null
   const answer = place ? await needs.host({ projectPath, projectId: started.projectId, token, kehikko }).catch(() => null) : null
   const hostDoor = answer?.doors.find((door) => door.module === 'kehikko')?.name ?? null
+  /* The guards of the modules placed there (protocol 2.61.0), for the shell tool: asked anyway, kept fresh at every prompt. */
+  if (answer) needs.keepGuards?.(token, answer.guards ?? [])
 
   /* The words are the protocol's, the same for every agent module; this module only delivers them. */
   const file = needs.toldFile(token)
@@ -307,4 +316,109 @@ export async function context(asked: { event: string; session: string; token: st
   const said: Said = notes.kind === 'start' || !told?.said ? { start: { at, text }, changes: [] } : { start: told.said.start, changes: [...told.said.changes, { at, text }].slice(-SAID_CHANGES) }
   writeTold(file, { ...notes.told, said })
   return { hookSpecificOutput: { hookEventName: event, additionalContext: text } }
+}
+
+/* ------------------------------------------------------------------------ *
+ * Subagents and guards (protocol 2.61.0)
+ * ------------------------------------------------------------------------ */
+
+/** Where the conversation behind a token belongs now, as `context` reads it, without filing anything. Null when it belongs nowhere. */
+function whereNow(session: string, token: string, needs: Pick<ContextNeeds, 'startedOf'>): { projectPath: string; started: Started; place: NamedPlace; kehikko: string | null } | null {
+  const started = needs.startedOf(token)
+  if (!started) return null
+  const root = projectRoot(started.projectPath)
+  if (!root.ok) return null
+  const projectPath = root.value
+  const read = readPlaces(projectPath)
+  const places = read.ok ? read.value : null
+  const home = places ? homeOf(places, session) : null
+  const entry = places && Object.hasOwn(places.sessions, session) ? places.sessions[session] : undefined
+  const place = home && places ? named(home, places, started.place) : entry?.detached || entry?.ignored ? null : started.place
+  if (!place) return null
+  const kehikko = place.kehikko && 'key' in place.kehikko ? place.kehikko.key : null
+  return { projectPath, started, place, kehikko }
+}
+
+/**
+ * What a subagent the session starts is told, at its first prompt (the plugin's `chat.message` for a
+ * child session, asked with the TOP-LEVEL conversation's id): the protocol's `subagentNotes` — the
+ * place, what each module on the kehikko says to agents, the guards there and the kehikko's skills. A
+ * subagent starts with only its brief, so without this a module's line never reaches it. Asked of
+ * the host WITHOUT messages: those are the session's, and a subagent's notes never count them
+ * delivered. Nothing is kept of what was said.
+ */
+async function subagentContext(session: string, token: string, needs: ContextNeeds): Promise<HookAnswer | null> {
+  const where = whereNow(session, token, needs)
+  if (!where) return null
+  const { projectPath, started, place, kehikko } = where
+  const answer = await needs.host({ projectPath, projectId: started.projectId, token, kehikko, messages: false }).catch(() => null)
+  if (answer) needs.keepGuards?.(token, answer.guards ?? [])
+  const unread = Boolean(place.kehikko && !kehikko)
+  const kit = needs.kitOf?.(token) ?? null
+  const listed = kit ? kitSkills(kit) : null
+  const text = subagentNotes(
+    {
+      place: notesPlace(projectPath, place),
+      modules: unread ? null : (answer?.modules ?? null),
+      absent: answer?.absent ?? null,
+      hostDoor: answer?.doors.find((door) => door.module === 'kehikko')?.name ?? null,
+      self: SELF,
+      holds: listed ? listed.map((one) => one.name) : null,
+      kehikkoSkills: unread ? null : (answer?.kehikkoSkills ?? null),
+    },
+    answer?.guards ?? null,
+  )
+  return text ? { hookSpecificOutput: { hookEventName: 'SubagentStart', additionalContext: text } } : null
+}
+
+/** How long the guards kept for a session are used before the host is asked again. */
+export const GUARDS_FRESH_MS = 30_000
+
+/**
+ * What the plugin does with one shell command: run `command` in its place (it sets the bash tool's
+ * `args.command` in `tool.execute.before`, so OpenCode's permission rules judge the command that will
+ * run, as they would any other), or refuse it (it throws, which OpenCode turns into the tool's
+ * error). `says` is the protocol's words for the agent (`guardSays`).
+ */
+export type GuardAnswer = { action: 'rewrite'; command: string; says: string } | { action: 'deny'; says: string }
+
+/**
+ * THE ANSWER to one shell command under the session's guards: pure. Null: run it as written — no
+ * command, no guard, or `direct` (KEHIKOT_DIRECT in the session's environment).
+ */
+export function guardAnswer(command: unknown, guards: readonly PlacedGuard[], direct = false): GuardAnswer | null {
+  if (typeof command !== 'string') return null
+  const decision = guardDecision(guards, command, { tool: 'shell', env: direct ? { KEHIKOT_DIRECT: '1' } : {} })
+  if (decision.action === 'pass') return null
+  if (decision.action === 'deny') return { action: 'deny', says: guardSays(decision) }
+  return { action: 'rewrite', command: decision.command, says: guardSays(decision) }
+}
+
+export interface GuardNeeds extends Pick<ContextNeeds, 'program' | 'startedOf' | 'host'> {
+  /** The guards kept for a token's session, and when; null when none are kept. */
+  keptGuards(token: string): { at: number; guards: PlacedGuard[] } | null
+  keepGuards(token: string, guards: PlacedGuard[]): void
+  now?(): number
+}
+
+/**
+ * The plugin's `tool.execute.before` for the bash tool (`POST /api/guard`): what becomes of one
+ * command, the session's own or a subagent's, under the guards of the modules placed on its kehikko.
+ * The guards kept from the last ask of the host are used while fresh (`GUARDS_FRESH_MS`), else the
+ * host is asked again, without messages. Any doubt — no place, no host, a token this module did not
+ * give out — is null: the command runs as written.
+ */
+export async function guard(asked: { session: string; token: string | null; command: unknown; direct?: boolean }, needs: GuardNeeds): Promise<GuardAnswer | null> {
+  const { session, token } = asked
+  if (!needs.program.isId(session) || !token || !PLACE_TOKEN.test(token) || typeof asked.command !== 'string') return null
+  const now = needs.now?.() ?? Date.now()
+  const kept = needs.keptGuards(token)
+  let guards = kept && now - kept.at < GUARDS_FRESH_MS ? kept.guards : null
+  if (guards === null) {
+    const where = whereNow(session, token, needs)
+    const answer = where ? await needs.host({ projectPath: where.projectPath, projectId: where.started.projectId, token, kehikko: where.kehikko, messages: false }).catch(() => null) : null
+    guards = answer ? (answer.guards ?? []) : (kept?.guards ?? [])
+    needs.keepGuards(token, guards)
+  }
+  return guardAnswer(asked.command, guards, Boolean(asked.direct))
 }

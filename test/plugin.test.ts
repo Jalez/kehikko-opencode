@@ -27,6 +27,7 @@ const TOKEN = 'T'.repeat(43)
 interface Heard {
   url: string
   ticket: string | undefined
+  body?: string
 }
 const heard: Heard[] = []
 let server: Server
@@ -39,9 +40,21 @@ const scratch = () => {
 }
 
 beforeAll(async () => {
-  server = createServer((request, response) => {
-    heard.push({ url: request.url ?? '', ticket: request.headers['x-module-ticket'] as string | undefined })
+  server = createServer(async (request, response) => {
+    let body = ''
+    for await (const chunk of request) body += chunk
+    heard.push({ url: request.url ?? '', ticket: request.headers['x-module-ticket'] as string | undefined, ...(body ? { body } : {}) })
     const url = new URL(request.url ?? '/', 'http://x')
+    /* A stand-in for the module's guard door: `bun test` is run through a queue, `tsc` refused, anything else as written. */
+    if (url.pathname === '/api/guard') {
+      const command = (JSON.parse(body || '{}') as { command?: string }).command ?? ''
+      if (request.headers['x-module-ticket'] !== TOKEN || url.searchParams.get('direct') === '1') return void response.writeHead(204).end()
+      response.setHeader('content-type', 'application/json')
+      if (command.startsWith('bun test')) return void response.end(JSON.stringify({ action: 'rewrite', command: `queue run -- '${command}'`, says: 'Queue ran this command through its own instead.' }))
+      if (command.startsWith('tsc')) return void response.end(JSON.stringify({ action: 'deny', says: 'Refused by Queue.' }))
+      if (command === 'broken') return void response.end('not json')
+      return void response.writeHead(204).end()
+    }
     if (url.pathname === '/api/context') {
       if (request.headers['x-module-ticket'] !== TOKEN) return void response.writeHead(204).end()
       response.setHeader('content-type', 'application/json')
@@ -71,7 +84,7 @@ const words = () => heard.filter((one) => one.url.startsWith('/api/state')).map(
 const ev = (type: string, properties: Record<string, unknown>) => ({ event: { id: 'evt_1', type, properties } })
 
 /** `fetch` as the plugin uses it, over node's http: the test document replaces the global one with a browser's. */
-const nodeFetch = (url: string, init: { method?: string; headers?: Record<string, string> } = {}) =>
+const nodeFetch = (url: string, init: { method?: string; headers?: Record<string, string>; body?: string } = {}) =>
   new Promise((done, fail) => {
     const req = httpRequest(url, { method: init.method ?? 'GET', headers: init.headers ?? {} }, (response) => {
       let body = ''
@@ -79,7 +92,7 @@ const nodeFetch = (url: string, init: { method?: string; headers?: Record<string
       response.on('end', () => done({ ok: (response.statusCode ?? 0) < 300, status: response.statusCode, text: async () => body, json: async () => JSON.parse(body) }))
     })
     req.on('error', fail)
-    req.end()
+    req.end(init.body)
   })
 
 async function plugin(more: { env?: Record<string, string>; kit?: string; client?: unknown; sayAfter?: number; readyAfter?: number } = {}) {
@@ -185,10 +198,76 @@ describe('what the plugin says, and to whom', () => {
       `/api/state?event=PermissionRequest&session=${RUN}&thread=${SESSION}`,
       `/api/state?event=SubagentStop&session=${RUN}&agent=${CHILD}&type=explore&task=Find+where+chimes+play`,
     ])
-    /* A child's prompt is never told the notes: the conversation it belongs to was. */
-    const output = { message: { id: 'msg_9' }, parts: [] as unknown[] }
+    /* A child's prompt is never told the session's notes, but at its first, what a subagent is told (protocol 2.61.0), asked with the conversation's id. */
+    heard.length = 0
+    const output = { message: { id: 'msg_9' }, parts: [{ id: 'prt_0009', type: 'text', text: 'brief' }] as unknown[] }
     await hooks['chat.message']({ sessionID: CHILD }, output)
-    expect(output.parts).toEqual([])
+    expect(heard.map((one) => one.url)).toEqual([`/api/context?event=SubagentStart&session=${SESSION}`])
+    expect(output.parts[1]).toMatchObject({ id: 'prt_0009kehikot', synthetic: true, sessionID: CHILD, messageID: 'msg_9', text: 'Kehikot: told at SubagentStart' })
+    const again = { message: { id: 'msg_10' }, parts: [] as unknown[] }
+    await hooks['chat.message']({ sessionID: CHILD }, again)
+    expect(again.parts).toEqual([])
+  })
+
+  describe('guards (protocol 2.61.0; OpenCode passes the args it runs to tool.execute.before, session/tools.ts at v1.19.5)', () => {
+    const call = (command: unknown, sessionID = SESSION, tool = 'bash', callID = 'call_1') => ({ input: { tool, sessionID, callID }, output: { args: { command, description: 'd' } } })
+
+    test('a rewrite replaces the command OpenCode runs, the command posted in the body with the token; the module’s words go before its output', async () => {
+      const hooks = await plugin()
+      const { input, output } = call('bun test --watch')
+      await hooks['tool.execute.before'](input, output)
+      expect(output.args).toEqual({ command: "queue run -- 'bun test --watch'", description: 'd' })
+      const asked = heard.find((one) => one.url.startsWith('/api/guard'))!
+      expect(asked.url).toBe(`/api/guard?session=${SESSION}&direct=0`)
+      expect(asked.ticket).toBe(TOKEN)
+      expect(JSON.parse(asked.body!)).toEqual({ command: 'bun test --watch' })
+      const result = { title: 't', output: 'ok', metadata: {} }
+      await hooks['tool.execute.after']({ ...input, args: output.args }, result)
+      expect(result.output).toBe('Kehikot: Queue ran this command through its own instead.\n\nok')
+      /* Once: another call's output is its own. */
+      const other = { title: 't', output: 'plain', metadata: {} }
+      await hooks['tool.execute.after']({ ...input, callID: 'call_2' }, other)
+      expect(other.output).toBe('plain')
+    })
+
+    test('a refusal throws the module’s words, which OpenCode makes the tool’s error', async () => {
+      const hooks = await plugin()
+      const { input, output } = call('tsc --noEmit')
+      await expect(hooks['tool.execute.before'](input, output)).rejects.toThrow('Refused by Queue.')
+      expect(output.args.command).toBe('tsc --noEmit')
+    })
+
+    test('a subagent’s command is held the same, asked with the conversation it belongs to', async () => {
+      const hooks = await plugin()
+      await hooks.event(ev('session.created', { info: { id: CHILD, parentID: SESSION, title: 'Run the tests (@general subagent)' } }))
+      const { input, output } = call('bun test', CHILD)
+      await hooks['tool.execute.before'](input, output)
+      expect(output.args.command).toBe("queue run -- 'bun test'")
+      expect(heard.find((one) => one.url.startsWith('/api/guard'))!.url).toBe(`/api/guard?session=${SESSION}&direct=0`)
+    })
+
+    test('no answer, another command, another tool, KEHIKOT_DIRECT, no token, nobody listening, a garbled answer: the args are untouched and nothing is thrown', async () => {
+      const untouched = async (hooks: Awaited<ReturnType<typeof plugin>>, command: unknown, tool = 'bash') => {
+        const { input, output } = call(command, SESSION, tool)
+        await hooks['tool.execute.before'](input, output)
+        expect(output.args).toEqual({ command, description: 'd' })
+      }
+      const hooks = await plugin()
+      await untouched(hooks, 'ls -la')
+      await untouched(hooks, 'broken')
+      await untouched(hooks, 'bun test', 'read')
+      await untouched(hooks, undefined)
+      expect(heard.filter((one) => one.url.startsWith('/api/guard'))).toHaveLength(2)
+      await untouched(await plugin({ env: env({ KEHIKOT_DIRECT: '1' }) }), 'bun test')
+      expect(heard.find((one) => one.url.startsWith('/api/guard'))!.url).toContain('direct=1')
+      await untouched(await plugin({ kit: kitOf(null) }), 'tsc')
+      expect(heard.filter((one) => one.url.startsWith('/api/guard'))).toHaveLength(0)
+      const gone = scratch()
+      mkdirSync(join(gone, 'kehikot'))
+      writeFileSync(join(gone, 'kehikot', 'token'), TOKEN)
+      writeFileSync(join(gone, 'kehikot', 'origin'), 'http://127.0.0.1:9')
+      await untouched(await plugin({ kit: join(gone, 'kehikot') }), 'tsc')
+    })
   })
 
   test('an answer’s tokens, cost and model once per answer, with the window of the model asked', async () => {

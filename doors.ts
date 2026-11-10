@@ -775,6 +775,17 @@ export async function answer(
     return said ? { status: 200, body: null, raw: { bytes: JSON.stringify(said), type: 'application/json' } } : { status: 204, body: null }
   }
 
+  /* The plugin's `tool.execute.before` for the bash tool (protocol 2.61.0, see `guard` in context.ts):
+     before each command of the session or its subagents, whether a module placed on its kehikko
+     guards it. Carries the session's place token like `/api/context`; of the body only `command` is
+     read, and none of it is kept. The answer is the command to run instead or the refusal, or
+     nothing (204): the command runs as written. */
+  if (path === '/api/guard') {
+    if (method !== 'POST') return bad('this door takes POST', 405)
+    const said = await theRuns().guard((query.get('session') ?? '').slice(0, 64), ticket, body?.command, query.get('direct') === '1')
+    return said ? { status: 200, body: null, raw: { bytes: JSON.stringify(said), type: 'application/json' } } : { status: 204, body: null }
+  }
+
   /* Every other door under /api, the read included: see "Reads carry the ticket too". */
   const refused = refuseTicket(ticket, TICKET)
   if (refused) return refused
