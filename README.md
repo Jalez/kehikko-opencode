@@ -25,11 +25,14 @@ framing it: a session belongs to a project, and only a host says which.
 
 - **A session per place.** A place is project + epic + the picked parts + kehikko. Opening the
   module there shows OpenCode's own TUI in a terminal: the place's conversation, resumed by id
-  (`opencode --session <id>`), or a new one. The View menu lists this kehikko's conversations;
+  (`opencode --session <id>`), or a new one. The conversation chooser lists this kehikko's conversations;
   OpenCode's own `/sessions` and `/new` (`/clear`) work in it, and the record follows (the plugin
   names the conversation every prompt is in).
-- **Disconnect and connect again**, from the View and Go menus, as in the Codex module. No agent
-  may press them. A disconnected conversation stays off every place until a person connects it again, and `/kehikot-here off` disconnects the conversation it is typed in.
+- **One conversation chooser**, as in the Codex module: the View menu holds one chooser labelled with the
+  conversation on screen ("Conversation: Fix login bug"), with this kehikko's own and the other
+  conversations here under their headings, each with what it is doing in words and when it was last
+  active, then "New conversation" and "Disconnect this conversation". Nothing from another place, and no
+  Go menu. Not confirmed, and no agent may press any of them. A disconnected conversation stays off every place until a person connects it again, and `/kehikot-here off` disconnects the conversation it is typed in.
 - **Filed with no command.** A conversation started here is filed under its place at its first
   prompt and is that kehikko's own when the kehikko had none. That holds at any container size: in a box too small for a terminal the session is started behind
   the tile all the same, so the tile shows a real one. Until it is spoken to, the bar above it says
@@ -42,7 +45,7 @@ framing it: a session belongs to a project, and only a host says which.
   skills; at later prompts only what changed. The words are the protocol's (`sessionNotes`), word
   for word what a Claude or Codex conversation on the same kehikko is told (tested equal). The
   plugin adds them to the prompt as a synthetic text part, which the model reads and the TUI does
-  not show as typed. *What this conversation was told* (View menu) shows them to the person.
+  not show as typed. *What this conversation was told* (Run menu) shows them to the person.
 - **The kehikko's MCP doors** — the host's and each module's, each carrying the conversation's
   place token — are remote MCP servers in the session's own `opencode.json`, for that one process.
 - **Skills, as OpenCode commands.** `/kehikot-here`, the skills of every module on the kehikko
@@ -54,7 +57,7 @@ framing it: a session belongs to a project, and only a host says which.
   as Claude Code does; `${CLAUDE_SESSION_ID}` becomes `$KEHIKOT_OPENCODE_SESSION`, which the plugin
   sets for every command OpenCode runs.
 - **Working, needs you, finished**, from OpenCode's own bus as the plugin hears it, in the Inbox
-  (`activity.set`) and the View menu, with a notice when a session nobody is looking at needs its
+  (`activity.set`) and the conversation chooser, with a notice when a session nobody is looking at needs its
   person or finishes. "Needs you" is an approval (`permission.asked`) or a question
   (`question.asked`) in a conversation that has had a turn and that the person has not had on
   screen since — including one a subagent is waiting on. Never an empty conversation at its
@@ -95,13 +98,13 @@ framing it: a session belongs to a project, and only a host says which.
   the page draws its own line and rows as before.
   The footer leads with the conversation on screen — what it is doing (**● Working**, **◆ Needs
   you**, *warn*, **○ Finished**), its title and what it is besides this module's own (*background*,
-  *copy*), which the View menu then leaves out of its option — so a container folded to its header
+  *copy*), said in the chooser only as *(running elsewhere)* — so a container folded to its header
   and footer still says what is going on. The strips the page drew above the terminal are the
   footer's too: "No conversation is connected…" with **Copy /kehikot-here** beside it, a run the app
   copies inside the person's click (`copy`, protocol 2.40.0; an app that does not copy keeps the
   page's own bar, where the click is), and "Disconnected …" with **Dismiss**. The header keeps only
-  what sets the module up or starts something: the View menu, Make own, Connected, What this
-  conversation was told, Disconnect, Connect, and the settings toggles.
+  what sets the module up or starts something: the conversation chooser (with New conversation and
+  Disconnect this conversation in it), Make own, What this conversation was told, and the settings toggles.
 - **Settings**: resume cut-off conversations; the model (`--model provider/model`); the agent
   (`--agent`); "Before editing or running commands" (`permission.edit: ask`, `bash: { "*": ask }`).
   Each a person's. None can make OpenCode ask less.
