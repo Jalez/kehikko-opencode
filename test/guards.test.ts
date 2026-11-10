@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -169,7 +169,9 @@ describe('what a subagent is told (SubagentStart)', () => {
     expect(text).toContain('Typecheck through the queue.')
     expect(asked[0]?.messages).toBe(false)
     expect(kept).toEqual([[QUEUE, NO_TSC]])
-    expect(told).toEqual([])
+    /* The session's record is read, for what changed since it was told (protocol 2.62.0), and never written. */
+    expect(told).toEqual([TOKEN])
+    expect(existsSync(join(project, 'told.json'))).toBe(false)
   })
 
   test('no host: the place all the same; a token this module did not give out: nothing', async () => {
