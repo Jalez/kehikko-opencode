@@ -384,15 +384,31 @@ export type GuardAnswer = { action: 'rewrite'; command: string; says: string } |
 
 /**
  * THE ANSWER to one shell command under the session's guards: pure. Null: run it as written — no
- * command, no guard, or `direct` (KEHIKOT_DIRECT in the session's environment).
+ * command, no guard, or `direct` (KEHIKOT_DIRECT in the session's environment). A rewritten command
+ * is handed off (`handedOff`).
  */
-export function guardAnswer(command: unknown, guards: readonly PlacedGuard[], direct = false): GuardAnswer | null {
+export function guardAnswer(command: unknown, guards: readonly PlacedGuard[], direct = false, token: string | null = null): GuardAnswer | null {
   if (typeof command !== 'string') return null
   const decision = guardDecision(guards, command, { tool: 'shell', env: direct ? { KEHIKOT_DIRECT: '1' } : {} })
   if (decision.action === 'pass') return null
   if (decision.action === 'deny') return { action: 'deny', says: guardSays(decision) }
-  return { action: 'rewrite', command: decision.command, says: guardSays(decision) }
+  return { action: 'rewrite', command: handedOff(decision.command, token), says: `${guardSays(decision)} ${HANDED_OFF}` }
 }
+
+/**
+ * The command a guard rewrote, as it runs here. OpenCode's bash tool waits for its command to exit, and kills it at its timeout (two minutes unless the
+ * agent asked for more), which would cancel a run still waiting in line; and a guard's command may wait its turn for
+ * many minutes — Queue's `run --guard` waits in line. So it is asked to hand the work off and return
+ * at once (`KEHIKOT_DETACH=1`), and the module that took it tells this session when it ends, by the
+ * session's place token (`KEHIKOT_PLACE`, as a session hands its token to every door it calls). A
+ * command that heeds neither runs as before.
+ */
+export function handedOff(command: string, token: string | null): string {
+  return `KEHIKOT_DETACH=1 ${token && PLACE_TOKEN.test(token) ? `KEHIKOT_PLACE=${token} ` : ''}${command}`
+}
+
+/** What the agent is told beside a handed-off command. */
+export const HANDED_OFF = "Queued work returns at once with its run's id; you'll be notified here when it finishes."
 
 export interface GuardNeeds extends Pick<ContextNeeds, 'program' | 'startedOf' | 'host'> {
   /** The guards kept for a token's session, and when; null when none are kept. */
@@ -420,5 +436,5 @@ export async function guard(asked: { session: string; token: string | null; comm
     guards = answer ? (answer.guards ?? []) : (kept?.guards ?? [])
     needs.keepGuards(token, guards)
   }
-  return guardAnswer(asked.command, guards, Boolean(asked.direct))
+  return guardAnswer(asked.command, guards, Boolean(asked.direct), token)
 }
