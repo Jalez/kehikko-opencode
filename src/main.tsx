@@ -1,13 +1,12 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-
 import './index.css'
 
 /* For its side effect: installs the mailbox before React mounts, so a host's
    greeting that arrives early is held rather than lost — and, from protocol
    2.59.0, the error reporter, so a page that fails tells the host why. */
 import 'kehikot-module-protocol/client'
-import { ReportErrors } from 'kehikot-module-protocol/client/react'
+/* The page's whole entry (protocol 2.70.0): StrictMode, and ReportErrors around it, so a render that
+   throws is said to the host; a missing root is said too, rather than left blank. */
+import { mountPage } from 'kehikot-module-protocol/client/mount'
 import { App } from './app.tsx'
 import { keepFramesComing } from './view/frames.ts'
 
@@ -17,13 +16,4 @@ import { keepFramesComing } from './view/frames.ts'
    timer instead. `src/view/frames.ts` is Terminal's, with its measurements. */
 keepFramesComing()
 
-const root = document.getElementById('root')
-if (root) {
-  createRoot(root).render(
-    <StrictMode>
-      <ReportErrors>
-        <App />
-      </ReportErrors>
-    </StrictMode>,
-  )
-}
+mountPage('root', <App />)
