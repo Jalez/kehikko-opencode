@@ -24,7 +24,15 @@
 //     A rewrite replaces `args.command` (OpenCode runs, and asks permission for, the args the hook
 //     leaves); a refusal throws, which OpenCode makes the tool's error. The module's words for the
 //     agent go with either: as the error, or before the output of the command that ran instead.
-//     No answer, any error: the command runs as written.
+//     Kehikot restarting is not a reason to skip the guards: while nothing answers (no connection, or
+//     the host saying the module is not up: 502, 503, 504) it asks again every second for up to 20
+//     seconds (KEHIKOT_GUARD_WAIT, for a test), and only then lets the command run as written, telling
+//     the agent before its output that it ran unguarded and how to queue heavy work itself. While
+//     Kehikot stays away (`../kehikot/away`, five minutes) later commands ask once and do not wait.
+//     Any other answer that is not a guard's: the command runs as written.
+//   - Where it asks this module, in order: Kehikot's stable address for it (`../kehikot/stable`, the
+//     host's `/m/<this module>`, which follows the module to whatever port it bound after a restart),
+//     what its registration names now, and the origin it served on when the session started.
 //   - At the first prompt of a subagent (a child session, the task tool's) it asks what a subagent is
 //     told (`subagentNotes`: the place, the modules on its kehikko, the guards there) and adds it to
 //     that prompt the same way: a subagent starts with only its brief.
@@ -37,10 +45,11 @@
 //
 // The run's secret travels in the environment (KEHIKOT_TELL_SECRET), the place token in a 0600
 // file beside this one (`../kehikot/token`). Neither is ever on a command line or in a URL. It
-// speaks only to 127.0.0.1, gives up after a few seconds, and never fails the session: every error
-// is nothing.
+// speaks only to 127.0.0.1, gives up after a few seconds (a shell command's guard: 20, while Kehikot
+// restarts; OpenCode puts no time limit on a plugin hook, `Plugin.trigger` at v1.19.5), and never
+// fails the session: every error is nothing.
 
-import { readFileSync } from 'node:fs'
+import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -48,6 +57,20 @@ const SESSION = /^ses_[0-9A-Za-z]{10,64}$/
 const TOKEN = /^[A-Za-z0-9_-]{16,64}$/
 const SECRET = /^[0-9a-f]{16,128}$/
 const LOOPBACK = /^http:\/\/127\.0\.0\.1:\d{1,5}$/
+/** Kehikot's stable address for a module: the host's origin and `/m/<module id>`. */
+const STABLE = /^http:\/\/127\.0\.0\.1:\d{1,5}\/m\/[A-Za-z0-9._-]{1,128}$/
+
+/** How long a command waits for Kehikot to come back, in seconds, and how long "away" holds after a wait that ran out. */
+const GUARD_WAIT = 20
+const AWAY_MS = 5 * 60_000
+/** A status that says the module is not up behind whoever answered (the host's proxy while it restarts, or the module before it knows its guards). */
+const NOT_UP = new Set([502, 503, 504])
+
+/** What the agent is told before the output of a command that ran without its guards because nobody answered. */
+const UNGUARDED =
+  'Kehikot did not answer (it may be restarting), so this command ran without the guards of the modules on your kehikko. ' +
+  'Until it is back, run heavy work (tests, typechecks, builds, big installs) through Queue yourself: its CLI, the kehikot-queue program its wait lines name, ' +
+  "run as `kehikot-queue run -- <command>` in the background, waits for Queue to come back and exits with the command's exit code."
 
 /** The module's words for a subagent the research rule calls one (research.ts): OpenCode's built-in read-only agent. */
 const AGENT = /\(@([A-Za-z0-9:._-]{1,64}) subagent\)\s*$/
@@ -70,6 +93,9 @@ export const KehikotPlugin = async (input, options = {}) => {
   const token = TOKEN.test(read(join(kit, 'token'))) ? read(join(kit, 'token')) : null
   const origin = LOOPBACK.test(read(join(kit, 'origin'))) ? read(join(kit, 'origin')) : port ? `http://127.0.0.1:${port}` : null
   const registration = read(join(kit, 'registration'))
+  const stable = STABLE.test(read(join(kit, 'stable'))) ? read(join(kit, 'stable')) : null
+  const wait = /^\d{1,4}$/.test(env.KEHIKOT_GUARD_WAIT ?? '') ? Number(env.KEHIKOT_GUARD_WAIT) : GUARD_WAIT
+  const every = options.guardEvery ?? 1000
   const tools = env.KEHIKOT_OPENCODE_TOOLS === '1'
 
   /** Top-level sessions told their full notes in this process; a compaction takes one off. */
@@ -100,16 +126,38 @@ export const KehikotPlugin = async (input, options = {}) => {
     }
   }
 
-  /** The module's origin now: the one it was on, else the one its registration names (it may have moved). */
+  /**
+   * Where the module is now, in the order asked: Kehikot's stable address for it, which follows it
+   * wherever it bound; what its registration names now, read afresh (it may have moved); the origin it
+   * was on when the session started.
+   */
   const origins = () => {
-    const out = origin ? [origin] : []
+    const out = stable ? [stable] : []
     try {
       const url = JSON.parse(readFileSync(registration, 'utf8')).url
       if (typeof url === 'string' && LOOPBACK.test(url) && !out.includes(url)) out.push(url)
     } catch {
       /* No registration, or not one. */
     }
+    if (origin && !out.includes(origin)) out.push(origin)
     return out
+  }
+
+  /** Kehikot was waited for within the last five minutes and did not come: a command asks once and does not wait again. */
+  const away = () => {
+    try {
+      return Date.now() - statSync(join(kit, 'away')).mtimeMs < AWAY_MS
+    } catch {
+      return false
+    }
+  }
+  const markAway = (on) => {
+    try {
+      if (on) writeFileSync(join(kit, 'away'), '', { mode: 0o600 })
+      else rmSync(join(kit, 'away'), { force: true })
+    } catch {
+      /* Not marked: the next command waits again, which is the most that costs. */
+    }
   }
 
   /** Ask the module what the session is to be told; the words, or null. */
@@ -131,30 +179,52 @@ export const KehikotPlugin = async (input, options = {}) => {
 
   /**
    * Ask the module what becomes of one shell command (protocol 2.61.0): `{ action: 'rewrite', command,
-   * says }`, `{ action: 'deny', says }`, or null — run it as written. Three seconds at most.
+   * says }`, `{ action: 'deny', says }`, `{ action: 'unguarded', says }` — nobody answered within the
+   * wait, run it as written and tell the agent — or null: run it as written. Three seconds an ask.
    */
   const guard = async (session, command) => {
     if (!token || typeof command !== 'string' || !command.trim()) return null
-    for (const at of origins()) {
-      try {
-        const response = await send(`${at}/api/guard?${new URLSearchParams({ session, direct: direct ? '1' : '0' })}`, {
-          method: 'POST',
-          headers: { 'x-module-ticket': token, 'content-type': 'application/json' },
-          body: JSON.stringify({ command }),
-          signal: AbortSignal.timeout(3000),
-        })
-        if (response.status === 204) return null
+    const began = Date.now()
+    const waitFor = away() ? 0 : wait * 1000
+    for (;;) {
+      let missing = false
+      for (const at of origins()) {
+        let response
+        try {
+          response = await send(`${at}/api/guard?${new URLSearchParams({ session, direct: direct ? '1' : '0' })}`, {
+            method: 'POST',
+            headers: { 'x-module-ticket': token, 'content-type': 'application/json' },
+            body: JSON.stringify({ command }),
+            signal: AbortSignal.timeout(3000),
+          })
+        } catch {
+          /* Nothing listening there (or no answer in time): Kehikot may be restarting. */
+          missing = true
+          continue
+        }
+        if (response.status === 204) {
+          markAway(false)
+          return null
+        }
+        if (NOT_UP.has(response.status)) {
+          missing = true
+          continue
+        }
         if (!response.ok) continue
+        markAway(false)
         const said = await response.json().catch(() => null)
         if (typeof said?.says !== 'string' || !said.says.trim()) return null
         if (said.action === 'deny') return { action: 'deny', says: said.says }
         if (said.action === 'rewrite' && typeof said.command === 'string' && said.command.trim()) return { action: 'rewrite', command: said.command, says: said.says }
         return null
-      } catch {
-        /* Not there: the next. */
       }
+      /* Everyone asked answered, none with a guard's answer: the command runs as written. */
+      if (!missing) return null
+      if (Date.now() - began >= waitFor) break
+      await new Promise((done) => setTimeout(done, every))
     }
-    return null
+    markAway(true)
+    return { action: 'unguarded', says: UNGUARDED }
   }
 
   /** The top-level session a session belongs to: itself, or a child's parent. */
@@ -356,7 +426,7 @@ export const KehikotPlugin = async (input, options = {}) => {
       }
       if (!said) return
       if (said.action === 'deny') throw new Error(said.says)
-      output.args.command = said.command
+      if (said.action === 'rewrite') output.args.command = said.command
       if (typeof asked.callID === 'string') {
         guarded.set(asked.callID, said.says)
         if (guarded.size > 256) guarded.delete(guarded.keys().next().value)
@@ -364,7 +434,7 @@ export const KehikotPlugin = async (input, options = {}) => {
     },
 
     'tool.execute.after': async (asked, output) => {
-      /* The module's words beside what the command it ran instead printed. */
+      /* The module's words beside what the command it ran instead printed (or the note that it ran unguarded). */
       const note = typeof asked?.callID === 'string' ? guarded.get(asked.callID) : undefined
       if (note !== undefined) {
         guarded.delete(asked.callID)
