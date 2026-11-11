@@ -101,38 +101,38 @@ describe('the guard door (guard): the guards of the modules placed on the sessio
     const clock = { now: 1_000 }
     let guards = [QUEUE]
     const { n, asked } = needs(async () => placed(guards), clock)
-    const first = await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, n)
+    const first = await guard({ session: SESSION, token: TOKEN, call: 'bun test' }, n)
     expect(actionOf(first)).toBe('rewrite')
     expect(asked).toEqual([{ projectPath: project, projectId: null, token: TOKEN, kehikko: 'wide', messages: false }])
     /* The module is taken off the kehikko: the host stops handing its guard. Within 30 s the kept list still holds. */
     guards = []
     clock.now += GUARDS_FRESH_MS - 1
-    expect(actionOf(await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, n))).toBe('rewrite')
+    expect(actionOf(await guard({ session: SESSION, token: TOKEN, call: 'bun test' }, n))).toBe('rewrite')
     expect(asked).toHaveLength(1)
     clock.now += 2
-    expect(await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, n)).toBeNull()
+    expect(await guard({ session: SESSION, token: TOKEN, call: 'bun test' }, n)).toBeNull()
     expect(asked).toHaveLength(2)
   })
 
   test('an old host that says no guards guards nothing; a host gone keeps what was kept; no token, a strange token, no command: nothing asked', async () => {
     const clock = { now: 0 }
     const old = needs(async () => placed(undefined), clock)
-    expect(await guard({ session: SESSION, token: TOKEN, command: 'bun test' }, old.n)).toBeNull()
+    expect(await guard({ session: SESSION, token: TOKEN, call: 'bun test' }, old.n)).toBeNull()
 
     const gone = needs(async () => null, clock)
     gone.kept.set(TOKEN, { at: -GUARDS_FRESH_MS * 2, guards: [NO_TSC] })
-    expect(actionOf(await guard({ session: SESSION, token: TOKEN, command: 'tsc' }, gone.n))).toBe('deny')
+    expect(actionOf(await guard({ session: SESSION, token: TOKEN, call: 'tsc' }, gone.n))).toBe('deny')
 
     /* The host away (Kehikot restarting) and nothing kept: not known, so not "no guards" — /api/guard says 503 and the plugin asks again. */
     const away = needs(async () => null, clock)
-    expect(await guard({ session: SESSION, token: TOKEN, command: 'tsc' }, away.n)).toBe(UNKNOWN)
+    expect(await guard({ session: SESSION, token: TOKEN, call: 'tsc' }, away.n)).toBe(UNKNOWN)
     expect(away.kept.size).toBe(0)
 
     const none = needs(async () => placed([QUEUE]), clock)
-    expect(await guard({ session: SESSION, token: null, command: 'bun test' }, none.n)).toBeNull()
-    expect(await guard({ session: SESSION, token: 'x'.repeat(32), command: 'bun test' }, none.n)).toBeNull()
-    expect(await guard({ session: SESSION, token: TOKEN, command: 42 }, none.n)).toBeNull()
-    expect(await guard({ session: 'nope', token: TOKEN, command: 'bun test' }, none.n)).toBeNull()
+    expect(await guard({ session: SESSION, token: null, call: 'bun test' }, none.n)).toBeNull()
+    expect(await guard({ session: SESSION, token: 'x'.repeat(32), call: 'bun test' }, none.n)).toBeNull()
+    expect(await guard({ session: SESSION, token: TOKEN, call: 42 }, none.n)).toBeNull()
+    expect(await guard({ session: 'nope', token: TOKEN, call: 'bun test' }, none.n)).toBeNull()
     expect(none.asked).toHaveLength(0)
   })
 

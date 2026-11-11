@@ -1,7 +1,9 @@
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
-import { doorCarriesPlace, guardDecision, guardSays, researchLine, sessionNotes, subagentNotes, type NotesPlace, type NotesTold, type PlacedGuard } from 'kehikot-module-protocol'
+import { checkToolCall, checkoutOf } from 'kehikot-module-protocol/serve'
+import { CLI_TOOLS, doorCarriesPlace, guardSays, toolReading, researchLine, sessionNotes, subagentNotes, type NotesPlace, type NotesTold, type PlacedGuard } from 'kehikot-module-protocol'
 
 import type { DoorsAsked, HostPlace } from './doorConfig.ts'
 import { ID } from './manifest.ts'
@@ -402,24 +404,69 @@ async function subagentContext(session: string, token: string, needs: ContextNee
 export const GUARDS_FRESH_MS = 30_000
 
 /**
- * What the plugin does with one shell command: run `command` in its place (it sets the bash tool's
- * `args.command` in `tool.execute.before`, so OpenCode's permission rules judge the command that will
- * run, as they would any other), or refuse it (it throws, which OpenCode turns into the tool's
- * error). `says` is the protocol's words for the agent (`guardSays`).
+ * What the plugin does with one tool call: run the shell command `command` in its place, written into
+ * the args' `field` (it sets them in `tool.execute.before`, so OpenCode's permission rules judge the
+ * command that will run, as they would any other), or refuse it (it throws, which OpenCode turns into
+ * the tool's error). `says` is the protocol's words for the agent (`guardSays`).
  */
-export type GuardAnswer = { action: 'rewrite'; command: string; says: string } | { action: 'deny'; says: string }
+export type GuardAnswer = { action: 'rewrite'; command: string; field: string; says: string } | { action: 'deny'; says: string }
+
+/** This CLI's name in the protocol's table of agent CLIs' tools. */
+export const CLI = 'opencode'
 
 /**
- * THE ANSWER to one shell command under the session's guards: pure. Null: run it as written — no
- * command, no guard, or `direct` (KEHIKOT_DIRECT in the session's environment). A rewritten command
- * is handed off (`handedOff`).
+ * The tools the plugin asks about, and the only keys of their args it sends (`kehikot/tools.json` in
+ * the session's kit): every OpenCode tool the protocol's table says a guard kind holds
+ * (`CLI_TOOLS.opencode`: `bash`, and the file tools at protocol 2.80.0), each with the keys that table
+ * reads — the command, the file path, the patch. A tool or key the table gains later reaches the plugin
+ * on the next protocol pin; nothing else of a tool's input leaves OpenCode.
  */
-export function guardAnswer(command: unknown, guards: readonly PlacedGuard[], direct = false, token: string | null = null): GuardAnswer | null {
-  if (typeof command !== 'string') return null
-  const decision = guardDecision(guards, command, { tool: 'shell', env: direct ? { KEHIKOT_DIRECT: '1' } : {} })
+export const GUARDED_TOOLS: Readonly<Record<string, readonly string[]>> = Object.fromEntries(
+  Object.entries(CLI_TOOLS[CLI]).map(([tool, reading]) => [tool, reading.kind === 'shell' ? [reading.command, ...(reading.env ? [reading.env] : [])] : 'patch' in reading ? [reading.patch] : [...reading.paths]]),
+)
+
+/** What the answer reads of this computer: the home folder for `~/` patterns, and which kind of git checkout a file is in (`checkoutOf`). */
+export interface EditFiles {
+  home: string | null
+  checkoutOf(path: string): 'main' | 'linked' | null
+}
+
+export const EDIT_FILES: EditFiles = {
+  home: homedir(), // kehikot-storage: allow read-only: the home folder an edit guard's ~/ patterns name
+  checkoutOf: (path) => checkoutOf(path),
+}
+
+/**
+ * The call the plugin posted: `{ tool, args, cwd }` (protocol 2.80.0), or `{ command }` from a plugin
+ * copied before it (or a bare string), a shell command. Null for anything else.
+ */
+export function postedCall(body: unknown): { tool: string; args: Record<string, unknown>; cwd: string | null } | null {
+  if (typeof body === 'string') return { tool: 'bash', args: { command: body }, cwd: null }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return null
+  const said = body as { tool?: unknown; args?: unknown; cwd?: unknown; command?: unknown }
+  if (typeof said.tool === 'string') {
+    if (!said.args || typeof said.args !== 'object' || Array.isArray(said.args)) return null
+    return { tool: said.tool, args: said.args as Record<string, unknown>, cwd: typeof said.cwd === 'string' ? said.cwd : null }
+  }
+  return typeof said.command === 'string' ? { tool: 'bash', args: { command: said.command }, cwd: null } : null
+}
+
+/**
+ * THE ANSWER to one tool call under the session's guards: pure but for what `files` reads. Every call
+ * goes through the protocol's one check (`checkToolCall`, protocol 2.80.0), which applies every guard
+ * kind the placed modules declare to whichever of OpenCode's tools it holds (`CLI_TOOLS.opencode`): a
+ * shell guard to `bash`, an edit guard to the file `edit`, `write` or `multiedit` writes and to every
+ * file a `patch` touches (a relative path read against the session's folder, `cwd`). Null: run it as
+ * written — a tool no guard holds, no guard, or `direct` (KEHIKOT_DIRECT in the session's environment).
+ * A rewritten command is handed off (`handedOff`).
+ */
+export function guardAnswer(body: unknown, guards: readonly PlacedGuard[], direct = false, token: string | null = null, files: EditFiles = EDIT_FILES): GuardAnswer | null {
+  const call = postedCall(body)
+  if (!call) return null
+  const decision = checkToolCall({ cli: CLI, tool: call.tool, input: call.args, cwd: call.cwd }, guards, { home: files.home, checkoutOf: files.checkoutOf, env: direct ? { KEHIKOT_DIRECT: '1' } : {} })
   if (decision.action === 'pass') return null
   if (decision.action === 'deny') return { action: 'deny', says: guardSays(decision) }
-  return { action: 'rewrite', command: handedOff(decision.command, token), says: `${guardSays(decision)} ${HANDED_OFF}` }
+  return { action: 'rewrite', command: handedOff(decision.command, token), field: decision.field, says: `${guardSays(decision)} ${HANDED_OFF}` }
 }
 
 /**
@@ -445,15 +492,15 @@ export interface GuardNeeds extends Pick<ContextNeeds, 'program' | 'startedOf' |
 }
 
 /**
- * The plugin's `tool.execute.before` for the bash tool (`POST /api/guard`): what becomes of one
- * command, the session's own or a subagent's, under the guards of the modules placed on its kehikko.
+ * The plugin's `tool.execute.before` for a tool the protocol's table holds (`POST /api/guard`): what
+ * becomes of one call, the session's own or a subagent's, under the guards of the modules placed on its kehikko.
  * The guards kept from the last ask of the host are used while fresh (`GUARDS_FRESH_MS`), else the
  * host is asked again, without messages. Any doubt — no place, no host, a token this module did not
  * give out — is null: the command runs as written.
  */
-export async function guard(asked: { session: string; token: string | null; command: unknown; direct?: boolean }, needs: GuardNeeds): Promise<GuardAnswer | null | typeof UNKNOWN> {
+export async function guard(asked: { session: string; token: string | null; call: unknown; direct?: boolean }, needs: GuardNeeds): Promise<GuardAnswer | null | typeof UNKNOWN> {
   const { session, token } = asked
-  if (!needs.program.isId(session) || !token || !PLACE_TOKEN.test(token) || typeof asked.command !== 'string') return null
+  if (!needs.program.isId(session) || !token || !PLACE_TOKEN.test(token) || !toolReading(CLI, postedCall(asked.call)?.tool)) return null
   const now = needs.now?.() ?? Date.now()
   const kept = needs.keptGuards(token)
   let guards = kept && now - kept.at < GUARDS_FRESH_MS ? kept.guards : null
@@ -465,7 +512,7 @@ export async function guard(asked: { session: string; token: string | null; comm
     guards = answer ? (answer.guards ?? []) : (kept?.guards ?? [])
     needs.keepGuards(token, guards)
   }
-  return guardAnswer(asked.command, guards, Boolean(asked.direct), token)
+  return guardAnswer(asked.call, guards, Boolean(asked.direct), token)
 }
 
 /** What `guard` answers when the session's guards cannot be known now: `/api/guard` says 503, and the plugin asks again while Kehikot restarts. */
