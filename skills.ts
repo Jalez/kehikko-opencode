@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { WELL_KNOWN, isKehikkoBound, missingNeeds, moduleSkillsSchema, needSaid, skillPath, skillTextIssue, type EverywhereSkill, type KehikkoSkill, type ModuleSkill, type ProvidingManifest } from 'kehikot-module-protocol'
@@ -224,6 +224,8 @@ export interface GatherOptions {
    * each written into the folder's `skills/` as it is, before any module's.
    */
   kehikkoSkills?: readonly KehikkoSkill[] | null
+  /** What the plugin tells the agent when Kehikot does not answer (`unguardedHook`): written beside the token. Absent: the plugin's own words. */
+  unguarded?: string | null
 }
 
 /** One skill of a session, as its context lists it. */
@@ -278,6 +280,26 @@ interface Gathered {
 
 /** A skill name as OpenCode takes one (`^[a-z0-9]+(-[a-z0-9]+)*$`, at most 64). */
 const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/
+
+/** Where a session's folder keeps what its plugin tells the agent when Kehikot does not answer. */
+export const UNGUARDED_FILE = join('kehikot', 'unguarded')
+
+/**
+ * Write what the plugin tells the agent when Kehikot does not answer into a session's folder, 0600,
+ * beside its token — at its start and again whenever the work queue the host names changes. A folder
+ * without its `kehikot/` is not a session's and is left alone. Never throws: false says it was not written.
+ */
+export function writeUnguarded(dir: string, line: string): boolean {
+  try {
+    const file = join(dir, UNGUARDED_FILE)
+    const temporary = `${file}.${process.pid}.tmp`
+    writeFileSync(temporary, line, { mode: 0o600 })
+    renameSync(temporary, file)
+    return true
+  } catch {
+    return false
+  }
+}
 
 /**
  * The folder a session started here is given (see "One folder per session"). Which skills: this
@@ -429,6 +451,7 @@ export async function sessionKit(doors: readonly SessionDoor[], options: GatherO
     /* Kehikot's stable address for this module (restarted.ts): asked first by the plugin, so a module that came back on another port is found through the host. */
     const stable = stableAddress(doors, ID)
     if (stable) writeFileSync(join(dir, 'kehikot', 'stable'), stable, { mode: 0o600 })
+    if (options.unguarded) writeUnguarded(dir, options.unguarded)
   }
   /* Read-only from here on: OpenCode writes nothing into it (see "One folder per session"). */
   for (const sub of ['skills', 'plugins']) lock(join(dir, sub))

@@ -31,7 +31,8 @@
 //     Kehikot restarting is not a reason to skip the guards: while nothing answers (no connection, or
 //     the host saying the module is not up: 502, 503, 504) it asks again every second for up to 20
 //     seconds (KEHIKOT_GUARD_WAIT, for a test), and only then lets the command run as written, telling
-//     the agent before its output that it ran unguarded and how to queue heavy work itself. While
+//     the agent before its output that it ran unguarded and, when a work queue is provided, how to hand
+//     it heavy work (the module's line, `../kehikot/unguarded`). While
 //     Kehikot stays away (`../kehikot/away`, five minutes) later commands ask once and do not wait.
 //     Any other answer that is not a guard's: the command runs as written.
 //   - Where it asks this module, in order: Kehikot's stable address for it (`../kehikot/stable`, the
@@ -70,11 +71,12 @@ const AWAY_MS = 5 * 60_000
 /** A status that says the module is not up behind whoever answered (the host's proxy while it restarts, or the module before it knows its guards). */
 const NOT_UP = new Set([502, 503, 504])
 
-/** What the agent is told before the output of a command that ran without its guards because nobody answered. */
-const UNGUARDED =
-  'Kehikot did not answer (it may be restarting), so this command ran without the guards of the modules on your kehikko. ' +
-  'Until it is back, run heavy work (tests, typechecks, builds, big installs) through Queue yourself: its CLI, the kehikot-queue program its wait lines name, ' +
-  "run as `kehikot-queue run -- <command>` in the background, waits for Queue to come back and exits with the command's exit code."
+/**
+ * What the agent is told before the output of a command that ran without its guards because nobody
+ * answered, when the module left no line of its own beside the token (`../kehikot/unguarded`, which
+ * says how to hand heavy work to the work queue Kehikot names, in that queue's words).
+ */
+const UNGUARDED = 'Kehikot did not answer (it may be restarting), so this command ran without the guards of the modules on your kehikko.'
 
 /** The module's words for a subagent the research rule calls one (research.ts): OpenCode's built-in read-only agent. */
 const AGENT = /\(@([A-Za-z0-9:._-]{1,64}) subagent\)\s*$/
@@ -254,7 +256,9 @@ export const KehikotPlugin = async (input, options = {}) => {
       await new Promise((done) => setTimeout(done, every))
     }
     markAway(true)
-    return { action: 'unguarded', says: UNGUARDED }
+    /* The module's line, read now: it follows the work queue Kehikot names. One line of text, or the plugin's own. */
+    const said = read(join(kit, 'unguarded'))
+    return { action: 'unguarded', says: said && said.length <= 4096 && !/[\u0000-\u001f\u007f]/.test(said) ? said : UNGUARDED }
   }
 
   /** The top-level session a session belongs to: itself, or a child's parent. */
