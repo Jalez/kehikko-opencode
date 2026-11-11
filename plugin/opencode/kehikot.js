@@ -12,16 +12,20 @@
 //     started or finished, the tokens of the last answer. It hears OpenCode's own bus (`event`)
 //     and two hooks (`chat.message`, `tool.execute.after`). The prompt, the answer, a tool's input
 //     or output are never read, carried or sent — but a subagent's title (the task tool's
-//     description), for "Research complete", and a shell command, for its guard (below).
+//     description), for "Research complete", and, for its guard (below), a shell command or the file
+//     an edit writes (only the args `../kehikot/tools.json` names).
 //   - At each prompt of a top-level session it asks the module what the session is to be told —
 //     its place and the modules on its kehikko, the protocol's `sessionNotes`, in full at the first
 //     prompt and after a compaction, only what changed after that (POST /api/context) — and adds
 //     the answer to the prompt as a synthetic text part, which the model reads and the TUI does
 //     not show as typed.
-//   - Before each command of OpenCode's shell tool (`bash`), the session's own or a subagent's, it asks
-//     the module whether a module placed on the session's kehikko guards it (POST /api/guard, protocol
-//     2.61.0): the command goes in the body, to this computer only, and the module keeps none of it.
-//     A rewrite replaces `args.command` (OpenCode runs, and asks permission for, the args the hook
+//   - Before each call of a tool the module names (`../kehikot/tools.json`: the tools the protocol's
+//     table holds — the shell tool `bash` and the file tools `edit`, `write`, `multiedit`, `patch` at
+//     protocol 2.80.0 — each with the keys of its args the guards read), the session's own or a
+//     subagent's, it asks the module whether a module placed on the session's kehikko guards it (POST
+//     /api/guard, protocol 2.61.0): the tool, those args and the session's folder go in the body, to
+//     this computer only, and the module keeps none of it. Without that file it asks about `bash`
+//     only. A rewrite replaces the command (OpenCode runs, and asks permission for, the args the hook
 //     leaves); a refusal throws, which OpenCode makes the tool's error. The module's words for the
 //     agent go with either: as the error, or before the output of the command that ran instead.
 //     Kehikot restarting is not a reason to skip the guards: while nothing answers (no connection, or
@@ -75,6 +79,24 @@ const UNGUARDED =
 /** The module's words for a subagent the research rule calls one (research.ts): OpenCode's built-in read-only agent. */
 const AGENT = /\(@([A-Za-z0-9:._-]{1,64}) subagent\)\s*$/
 
+/** The tools asked about without the module's list, and the args each sends: a module before protocol 2.80.0 held the shell only. */
+const SHELL_ONLY = { bash: ['command'] }
+
+/** The module's list of tools to ask about (`tools.json`): tool name → the keys of its args to send. Anything malformed is the shell only. */
+const toolsOf = (text) => {
+  try {
+    const said = JSON.parse(text)
+    if (!said || typeof said !== 'object' || Array.isArray(said)) return SHELL_ONLY
+    const out = {}
+    for (const [tool, keys] of Object.entries(said)) {
+      if (Array.isArray(keys) && keys.every((key) => typeof key === 'string')) out[tool] = keys
+    }
+    return Object.keys(out).length ? out : SHELL_ONLY
+  } catch {
+    return SHELL_ONLY
+  }
+}
+
 const read = (file) => {
   try {
     return readFileSync(file, 'utf8').trim()
@@ -96,6 +118,10 @@ export const KehikotPlugin = async (input, options = {}) => {
   const stable = STABLE.test(read(join(kit, 'stable'))) ? read(join(kit, 'stable')) : null
   const wait = /^\d{1,4}$/.test(env.KEHIKOT_GUARD_WAIT ?? '') ? Number(env.KEHIKOT_GUARD_WAIT) : GUARD_WAIT
   const every = options.guardEvery ?? 1000
+  /** The tools the guards are asked about, and the keys of their args sent (protocol 2.80.0). */
+  const guardedTools = toolsOf(read(join(kit, 'tools.json')))
+  /** The session's folder, against which the module reads a relative path. */
+  const folder = typeof input?.directory === 'string' && input.directory.startsWith('/') ? input.directory : null
   const tools = env.KEHIKOT_OPENCODE_TOOLS === '1'
 
   /** Top-level sessions told their full notes in this process; a compaction takes one off. */
@@ -178,12 +204,16 @@ export const KehikotPlugin = async (input, options = {}) => {
   }
 
   /**
-   * Ask the module what becomes of one shell command (protocol 2.61.0): `{ action: 'rewrite', command,
-   * says }`, `{ action: 'deny', says }`, `{ action: 'unguarded', says }` — nobody answered within the
-   * wait, run it as written and tell the agent — or null: run it as written. Three seconds an ask.
+   * Ask the module what becomes of one tool call (protocol 2.61.0; any guarded tool, 2.80.0): `{ action:
+   * 'rewrite', command, field, says }`, `{ action: 'deny', says }`, `{ action: 'unguarded', says }` —
+   * nobody answered within the wait, run it as written and tell the agent — or null: run it as written.
+   * Only the args the module named are sent. Three seconds an ask.
    */
-  const guard = async (session, command) => {
-    if (!token || typeof command !== 'string' || !command.trim()) return null
+  const guard = async (session, tool, args) => {
+    if (!token || !Object.hasOwn(guardedTools, tool) || !args || typeof args !== 'object') return null
+    const sent = {}
+    for (const key of guardedTools[tool]) if (args[key] !== undefined) sent[key] = args[key]
+    if (!Object.keys(sent).length) return null
     const began = Date.now()
     const waitFor = away() ? 0 : wait * 1000
     for (;;) {
@@ -194,7 +224,7 @@ export const KehikotPlugin = async (input, options = {}) => {
           response = await send(`${at}/api/guard?${new URLSearchParams({ session, direct: direct ? '1' : '0' })}`, {
             method: 'POST',
             headers: { 'x-module-ticket': token, 'content-type': 'application/json' },
-            body: JSON.stringify({ command }),
+            body: JSON.stringify({ tool, args: sent, ...(folder ? { cwd: folder } : {}) }),
             signal: AbortSignal.timeout(3000),
           })
         } catch {
@@ -215,7 +245,7 @@ export const KehikotPlugin = async (input, options = {}) => {
         const said = await response.json().catch(() => null)
         if (typeof said?.says !== 'string' || !said.says.trim()) return null
         if (said.action === 'deny') return { action: 'deny', says: said.says }
-        if (said.action === 'rewrite' && typeof said.command === 'string' && said.command.trim()) return { action: 'rewrite', command: said.command, says: said.says }
+        if (said.action === 'rewrite' && typeof said.command === 'string' && said.command.trim()) return { action: 'rewrite', command: said.command, field: typeof said.field === 'string' && said.field ? said.field : 'command', says: said.says }
         return null
       }
       /* Everyone asked answered, none with a guard's answer: the command runs as written. */
@@ -410,23 +440,24 @@ export const KehikotPlugin = async (input, options = {}) => {
     },
 
     /*
-     * Every command of the shell tool, the session's own and its subagents', held to the guards of the
-     * modules placed on its kehikko (protocol 2.61.0). OpenCode passes the very `args` object it then
-     * runs (session/tools.ts at v1.19.5), so a rewrite is a new `args.command`, and the person's
-     * permission rules judge that command; a throw stops the call and is the tool's error.
+     * Every call of a guarded tool (the shell and the file tools, `tools.json`), the session's own and
+     * its subagents', held to the guards of the modules placed on its kehikko (protocol 2.61.0; edits
+     * 2.80.0). OpenCode passes the very `args` object it then runs (session/tools.ts at v1.19.5), so a
+     * rewrite is a new command in the args, and the person's permission rules judge that command; a
+     * throw stops the call and is the tool's error.
      */
     'tool.execute.before': async (asked, output) => {
       const id = asked?.sessionID
-      if (asked?.tool !== 'bash' || !SESSION.test(id ?? '') || !output?.args || typeof output.args.command !== 'string') return
+      if (typeof asked?.tool !== 'string' || !Object.hasOwn(guardedTools, asked.tool) || !SESSION.test(id ?? '') || !output?.args || typeof output.args !== 'object') return
       let said = null
       try {
-        said = await guard(topOf(id), output.args.command)
+        said = await guard(topOf(id), asked.tool, output.args)
       } catch {
         said = null
       }
       if (!said) return
       if (said.action === 'deny') throw new Error(said.says)
-      if (said.action === 'rewrite') output.args.command = said.command
+      if (said.action === 'rewrite') output.args[said.field] = said.command
       if (typeof asked.callID === 'string') {
         guarded.set(asked.callID, said.says)
         if (guarded.size > 256) guarded.delete(guarded.keys().next().value)

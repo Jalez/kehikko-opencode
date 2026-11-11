@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { listing, runOf, type Listing } from '../doors.ts'
 import { CLOSED, Runs, activityRows, keptProjects, sameProject, TELL_ENV, TICKET, fenced, headless, opening, readPlace, sayable, type Follower, type Notice, type Opening, type Pty, type Run, type Stated, type Viewer } from '../live.ts'
 import { placeKey } from '../place.ts'
-import { RESEARCH_LINE, SELF as CONTEXT_SELF, type GuardAnswer } from '../context.ts'
+import { GUARDED_TOOLS, RESEARCH_LINE, SELF as CONTEXT_SELF, type GuardAnswer } from '../context.ts'
 import { readKeptGuards } from '../restarted.ts'
 import { KEHIKKO_SKILLS_HEAD, NOTES_VERSION, UPDATED_HEAD, finishLine, kehikkoSkillText, sessionNotes, type AbsentModule, type KehikkoSkill, type PlacedGuard } from 'kehikot-module-protocol'
 import { freshToken } from '../doorConfig.ts'
@@ -2225,6 +2225,8 @@ describe('a session started here knows its place and its kehikko’s modules, an
     expect(statSync(file).mode & 0o777).toBe(0o600)
     expect(statSync(kit).mode & 0o077).toBe(0)
     expect(JSON.parse(readFileSync(join(kit, 'kehikot', 'skills.json'), 'utf8')).map((one: { name: string }) => one.name)).toContain('review-checklist')
+    /* What the plugin asks the guards about (protocol 2.80.0): the protocol's tools for OpenCode, each with the args its guards read. */
+    expect(JSON.parse(readFileSync(join(kit, 'kehikot', 'tools.json'), 'utf8'))).toEqual(GUARDED_TOOLS)
     /* Nothing written where the person's or the project's OpenCode reads skills. */
     expect(existsSync(join(dir, '.opencode'))).toBe(false)
     expect(existsSync(join(process.env.HOME!, '.config', 'opencode'))).toBe(false)

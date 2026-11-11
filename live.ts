@@ -2269,13 +2269,13 @@ export class Runs {
   }
 
   /**
-   * The plugin's `tool.execute.before` for the bash tool (`POST /api/guard`, see `guard` in
-   * context.ts): what becomes of one command, the session's or a subagent's, under the guards of the
+   * The plugin's `tool.execute.before` for a guarded tool (`POST /api/guard`, see `guard` in
+   * context.ts): what becomes of one call, the session's or a subagent's, under the guards of the
    * modules placed on its kehikko. Null: run it as written.
    */
-  async guard(session: string, token: string | null, command: unknown, direct: boolean): Promise<GuardAnswer | null | 'unknown'> {
+  async guard(session: string, token: string | null, call: unknown, direct: boolean): Promise<GuardAnswer | null | 'unknown'> {
     return guard(
-      { session, token, command, direct },
+      { session, token, call, direct },
       {
         program: this.program,
         startedOf: (one) => this.startedOf(one),

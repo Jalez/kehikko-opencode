@@ -47,7 +47,15 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://x')
     /* A stand-in for the module's guard door: `bun test` is run through a queue, `tsc` refused, anything else as written. */
     if (url.pathname === '/api/guard') {
-      const command = (JSON.parse(body || '{}') as { command?: string }).command ?? ''
+      const command = (JSON.parse(body || '{}') as { args?: { command?: string } }).args?.command ?? ''
+      const posted = JSON.parse(body || '{}') as { tool?: string; args?: Record<string, unknown>; cwd?: string }
+      if (posted.tool && posted.tool !== 'bash') {
+        if (request.headers['x-module-ticket'] !== TOKEN) return void response.writeHead(204).end()
+        const file = String(posted.args?.filePath ?? posted.args?.path ?? posted.args?.patchText ?? '')
+        const inMain = file.includes('/main/') || (!file.startsWith('/') && posted.cwd?.includes('/main'))
+        response.setHeader('content-type', 'application/json')
+        return inMain ? void response.end(JSON.stringify({ action: 'deny', says: 'Refused by Worktrees: make a worktree.' })) : void response.writeHead(204).end()
+      }
       if (request.headers['x-module-ticket'] !== TOKEN || url.searchParams.get('direct') === '1') return void response.writeHead(204).end()
       response.setHeader('content-type', 'application/json')
       if (command.startsWith('bun test')) return void response.end(JSON.stringify({ action: 'rewrite', command: `queue run -- '${command}'`, says: 'Queue ran this command through its own instead.' }))
@@ -209,6 +217,41 @@ describe('what the plugin says, and to whom', () => {
     expect(again.parts).toEqual([])
   })
 
+  describe('edit guards (protocol 2.80.0): the tools the module names in tools.json, only the args it names', () => {
+    const TOOLS = { bash: ['command'], edit: ['filePath', 'path'], write: ['filePath', 'path'], patch: ['patchText'] }
+    const withTools = () => {
+      const kit = kitOf()
+      writeFileSync(join(kit, 'tools.json'), JSON.stringify(TOOLS))
+      return kit
+    }
+    const editPlugin = (kit: string, directory?: string) => KehikotPlugin({ client: {}, ...(directory ? { directory } : {}) }, { env: env(), kit, sayAfter: 0, readyAfter: 0, fetch: nodeFetch })
+
+    test('an edit in a main checkout is refused with the module’s words; only the path and the session’s folder are sent', async () => {
+      const hooks = await editPlugin(withTools(), '/p/main')
+      const output = { args: { filePath: '/p/main/a.ts', oldString: 'secret', newString: 'x' } }
+      await expect(hooks['tool.execute.before']({ tool: 'edit', sessionID: SESSION, callID: 'c1' }, output)).rejects.toThrow('make a worktree')
+      const asked = heard.find((one) => one.url.startsWith('/api/guard'))!
+      expect(JSON.parse(asked.body!)).toEqual({ tool: 'edit', args: { filePath: '/p/main/a.ts' }, cwd: '/p/main' })
+      const relative = { args: { path: 'a.ts', content: 'x' } }
+      await expect(hooks['tool.execute.before']({ tool: 'write', sessionID: SESSION, callID: 'c2' }, relative)).rejects.toThrow('make a worktree')
+    })
+
+    test('an edit in a worktree runs as written', async () => {
+      const hooks = await editPlugin(withTools(), '/p/app-worktrees/x')
+      const output = { args: { filePath: '/p/app-worktrees/x/a.ts', oldString: 'a', newString: 'b' } }
+      await hooks['tool.execute.before']({ tool: 'edit', sessionID: SESSION, callID: 'c3' }, output)
+      expect(output.args).toEqual({ filePath: '/p/app-worktrees/x/a.ts', oldString: 'a', newString: 'b' })
+      const patch = { args: { patchText: '*** Begin Patch\n*** Add File: /p/main/b.ts\n*** End Patch' } }
+      await expect(hooks['tool.execute.before']({ tool: 'patch', sessionID: SESSION, callID: 'c4' }, patch)).rejects.toThrow('make a worktree')
+    })
+
+    test('without the module’s list, only the shell is asked about: an edit is not sent', async () => {
+      const hooks = await plugin()
+      await hooks['tool.execute.before']({ tool: 'edit', sessionID: SESSION, callID: 'c5' }, { args: { filePath: '/p/main/a.ts' } })
+      expect(heard.filter((one) => one.url.startsWith('/api/guard'))).toHaveLength(0)
+    })
+  })
+
   describe('guards (protocol 2.61.0; OpenCode passes the args it runs to tool.execute.before, session/tools.ts at v1.19.5)', () => {
     const call = (command: unknown, sessionID = SESSION, tool = 'bash', callID = 'call_1') => ({ input: { tool, sessionID, callID }, output: { args: { command, description: 'd' } } })
 
@@ -220,7 +263,8 @@ describe('what the plugin says, and to whom', () => {
       const asked = heard.find((one) => one.url.startsWith('/api/guard'))!
       expect(asked.url).toBe(`/api/guard?session=${SESSION}&direct=0`)
       expect(asked.ticket).toBe(TOKEN)
-      expect(JSON.parse(asked.body!)).toEqual({ command: 'bun test --watch' })
+      /* Only the args the guards read: the description stays in OpenCode. */
+      expect(JSON.parse(asked.body!)).toEqual({ tool: 'bash', args: { command: 'bun test --watch' } })
       const result = { title: 't', output: 'ok', metadata: {} }
       await hooks['tool.execute.after']({ ...input, args: output.args }, result)
       expect(result.output).toBe('Kehikot: Queue ran this command through its own instead.\n\nok')

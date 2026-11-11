@@ -7,6 +7,7 @@ import { originFor, preferred, registryDir } from 'kehikot-module-protocol/serve
 
 import { configDirOf, mcpOf, type SessionDoor } from './doorConfig.ts'
 import { ID, PREFERRED_PORT } from './manifest.ts'
+import { GUARDED_TOOLS } from './context.ts'
 import { PLACE_TOKEN } from './record.ts'
 import { stableAddress } from './restarted.ts'
 import { DEFAULTS, permissionOf, type Settings } from './settings.ts'
@@ -418,6 +419,8 @@ export async function sessionKit(doors: readonly SessionDoor[], options: GatherO
 
   mkdirSync(join(dir, 'kehikot'), { mode: 0o700 })
   writeFileSync(join(dir, 'kehikot', 'skills.json'), JSON.stringify(skills), { mode: 0o600 })
+  /* The tools the plugin asks the guards about, and the keys of their args it sends (protocol 2.80.0, `GUARDED_TOOLS`). */
+  writeFileSync(join(dir, 'kehikot', 'tools.json'), JSON.stringify(GUARDED_TOOLS), { mode: 0o600 })
   writeFileSync(join(dir, 'kehikot', 'pid'), String(process.pid), { mode: 0o600 })
   if (options.token && PLACE_TOKEN.test(options.token)) {
     writeFileSync(join(dir, 'kehikot', 'token'), options.token, { mode: 0o600 })
