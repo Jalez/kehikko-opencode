@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { unguardedHook } from '../context.ts'
 import { TELL_ENV } from '../live.ts'
 import { removeKit, serveFrom, servedOrigin, sessionKit } from '../skills.ts'
 // @ts-expect-error: the plugin is plain JavaScript, as OpenCode loads it.
@@ -359,7 +360,7 @@ describe('what the plugin says, and to whom', () => {
       return join(dir, 'kehikot')
     }
 
-    test('nobody answers: asked again until the wait runs out, then the command runs as written and the agent is told it ran unguarded and how to queue', async () => {
+    test('nobody answers: asked again until the wait runs out, then the command runs as written and the agent is told only that it ran unguarded', async () => {
       const kit = kitAt({ origin: `http://127.0.0.1:${await deadPort()}` })
       const hooks = await plugin({ kit, env: env({ KEHIKOT_GUARD_WAIT: '1' }), guardEvery: 100 })
       const { input, output } = call('bun test')
@@ -370,9 +371,21 @@ describe('what the plugin says, and to whom', () => {
       const result = { title: 't', output: 'ok', metadata: {} }
       await hooks['tool.execute.after'](input, result)
       expect(result.output).toStartWith('Kehikot: Kehikot did not answer (it may be restarting), so this command ran without the guards')
-      expect(result.output).toContain('`kehikot-queue run -- <command>` in the background')
+      expect(result.output).not.toMatch(/queue/i)
       expect(result.output).toEndWith('\n\nok')
       expect(existsSync(join(kit, 'away'))).toBe(true)
+    })
+
+    test('nobody answers, the module left its line: the agent is told how to hand heavy work to the work queue, in that queue’s words', async () => {
+      const kit = kitAt({ origin: `http://127.0.0.1:${await deadPort()}` })
+      writeFileSync(join(kit, 'unguarded'), unguardedHook({ name: 'Lane Keeper', run: { test: "'/opt/lane' take -- {command}" }, marks: [] }))
+      const hooks = await plugin({ kit, env: env({ KEHIKOT_GUARD_WAIT: '0' }), guardEvery: 100 })
+      const { input, output } = call('bun test')
+      await hooks['tool.execute.before'](input, output)
+      const result = { title: 't', output: 'ok', metadata: {} }
+      await hooks['tool.execute.after'](input, result)
+      expect(result.output).toContain("through Lane Keeper yourself: `'/opt/lane' take -- <command>`")
+      expect(result.output).toEndWith('\n\nok')
     })
 
     test('the module back on a new port within the wait is found through its registration, and its guard applies', async () => {
