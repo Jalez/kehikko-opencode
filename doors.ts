@@ -8,6 +8,7 @@ import { isKehikkoKey, kehikkoOf, placeKey, readPlaceKey, type Place } from './p
 import { PROGRAM, headOf, home, type Program, type Recorded, type Running, type State } from './program.ts'
 import { PLACE_TOKEN, WHERE, assign, detach, follow, homeOf, isDetached, ownOf, projectRoot, readPlaces, readSettings, recordedIds, rekey, sessionsAt, writeSettings, type Places } from './record.ts'
 import { here } from './here.ts'
+import { hostDoor } from './adopt.ts'
 import { isSkillPath, serveFrom, skillAt, skillDeclarations } from './skills.ts'
 import { contextWords, costSaid, percentOf, usageOf, type Context } from './meter.ts'
 
@@ -80,6 +81,22 @@ export const MOST_READ = 64 * 1024
 export const hostCheck = { has: (folder: string) => hostHasProject(folder) }
 
 /** What this process is built from, said in the manifest, at `/healthz`, in the page and on every answer. */
+/**
+ * The routes only Kehikot's own server may call (protocol 2.88.0, adopt.ts): which conversations
+ * worked on an item, filing one under a place, and starting one for a task. A door asked before the
+ * protocol's, because `vouchHost` reads the request's headers and `answer` is not handed them.
+ */
+export const HOST_DOOR = hostDoor(() => {
+  const runs = theRuns()
+  return {
+    program: PROGRAM,
+    holds: (session) => runs.find(session) !== null,
+    rehome: (session, place) => runs.rehome(session, place),
+    told: (projectPath, assigned) => runs.told(projectPath, assigned),
+    start: (projectPath, place, brief, title) => runs.startTask(projectPath, place, brief, title),
+  }
+})
+
 export const BUILD = establishBuild({ version: VERSION, dir: import.meta.dirname })
 
 const ok = (body: unknown): Reply => ({ status: 200, body })
@@ -794,6 +811,14 @@ export async function answer(
   /* Every other door under /api, the read included: see "Reads carry the ticket too". */
   const refused = refuseTicket(ticket, TICKET)
   if (refused) return refused
+
+  /* A task's conversation on its own (`agent.tasks`' view, `/app?session=<id>`): where it runs, so the
+     page can show it without a host's greeting. Only one this process runs. */
+  if (path === '/api/tasks/view' && method === 'GET') {
+    const id = (query.get('session') ?? '').slice(0, 64)
+    if (!PROGRAM.isId(id)) return bad('that is not a session id')
+    return ok({ ok: true, view: theRuns().taskView(id) })
+  }
 
   if (path === '/api/place' && method === 'GET') {
     const id = query.get('projectId') ?? ''

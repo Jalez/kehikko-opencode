@@ -134,6 +134,8 @@ export interface Recorded {
   lastActive: number
   /** What the conversation cost, as OpenCode summed it (its `session.cost`); 0 for nothing priced. */
   cost?: number
+  /** The folder OpenCode ran it in (its `session.directory`), when the record names one. */
+  folder?: string
 }
 
 export interface Install {
@@ -536,7 +538,7 @@ function recordedOf(row: Row): Recorded | null {
   const title = typeof row.title === 'string' ? row.title : ''
   const first = line(row.first, LABEL_CHARS)
   const label = title && !isDefaultTitle(title) ? line(title, LABEL_CHARS) : first
-  return { id: row.id, label, firstPrompt: first, lastPrompt: line(row.last, TITLE_CHARS), prs: [], next: [], lastActive: typeof row.updated === 'number' ? row.updated : 0, cost: typeof row.cost === 'number' && Number.isFinite(row.cost) && row.cost >= 0 ? row.cost : 0 }
+  return { id: row.id, label, firstPrompt: first, lastPrompt: line(row.last, TITLE_CHARS), prs: [], next: [], lastActive: typeof row.updated === 'number' ? row.updated : 0, cost: typeof row.cost === 'number' && Number.isFinite(row.cost) && row.cost >= 0 ? row.cost : 0, ...(typeof row.directory === 'string' && row.directory.startsWith('/') ? { folder: row.directory } : {}) }
 }
 
 async function sessions(projectPath: string, also: readonly string[] = []): Promise<Recorded[]> {
@@ -765,7 +767,8 @@ const PS = ['/bin/ps', '/usr/bin/ps']
 /**
  * `ps -axo pid=,command=` output: each `opencode` process started on a session, as `session → pid`.
  * Only the program itself (its file is named `opencode`, or `.opencode` behind npm's launcher),
- * and only `--session <id>`, `--session=<id>` or `-s <id>`.
+ * and only `--session <id>`, `--session=<id>` or `-s <id>` — before any `--prompt`, whose text is
+ * a person's or a task's words, whatever they spell.
  */
 export function readPs(text: string): Map<string, number> {
   const out = new Map<string, number>()
@@ -779,6 +782,8 @@ export function readPs(text: string): Map<string, number> {
     const rest = words.slice(program + 1)
     for (let i = 0; i < rest.length; i += 1) {
       const word = rest[i]!
+      /* A task's brief rides last, behind `--prompt` (`start` in live.ts): words, never options. */
+      if (word === '--prompt' || word.startsWith('--prompt=')) break
       const id = word === '--session' || word === '-s' ? rest[i + 1] : word.startsWith('--session=') ? word.slice('--session='.length) : undefined
       if (id && SESSION_ID.test(id) && !out.has(id)) out.set(id, pid)
     }

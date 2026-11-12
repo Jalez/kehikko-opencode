@@ -172,4 +172,11 @@ export const MANIFEST: Manifest = manifestSchema.parse({
     settings: SETTINGS,
   },
   health: '/healthz',
+  /* Adopting an item with the conversation that worked on it (protocol 2.88.0), called by the host
+     only (adopt.ts): which OpenCode conversations worked on a ref, filing one under a place, and a new
+     conversation for one of Kehikot's tasks, shown on its own at `view`. */
+  services: {
+    'conversations.finder': { name: 'OpenCode', program: 'OpenCode', find: '/api/conversations/find', bring: '/api/conversations/bring' },
+    'agent.tasks': { name: 'OpenCode', program: 'OpenCode', start: '/api/tasks/start', view: '/app?session={session}' },
+  },
 })
