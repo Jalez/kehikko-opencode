@@ -1,7 +1,7 @@
 # OpenCode — notes for agents
 
 A Kehikot module: a terminal holding the OpenCode session (`opencode`) that belongs to a place
-(project, epic, picked parts, kehikko). The sibling of the Codex module (`kehikot.codex`): the same
+(project, space, kehikko). The sibling of the Codex module (`kehikot.codex`): the same
 record, page and doors, with `program.ts` answering for OpenCode and `plugin/opencode/kehikot.js`
 standing where Codex's hooks stand. README.md says what it does and why, and what OpenCode can and
 cannot do here.

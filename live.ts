@@ -15,6 +15,7 @@ import { RESEARCH_COMPLETE_EVENT, STALLED_EVENT, TURN_EVENTS, TURN_KINDS, TURN_R
 import { emptyPrompt, promptAfter, typedByPerson, type Prompt } from './input.ts'
 import { Gauges, contextOf, type Context, type Reported } from './meter.ts'
 import { isKehikkoKey, kehikkoOf, placeKey, sortedParts, type Kehikko } from './place.ts'
+import { readSpace, type SpaceStep } from './spaces.ts'
 import { cutOffs, cutOffWords, lastPrompt, midTurn, type CutOff } from './cutoff.ts'
 import { PROGRAM, WORDS, headOf, home, learnSession, recordFile, sessionName, type Active, type ActiveStatus, type Program, type Running, type State } from './program.ts'
 import { PLACE_TOKEN, assign, attach, born, byToken, follow, homeOf, isDetached, markSession, markSessions, note, projectRoot, readPlaces, readSettings, recordedIds, sighted, stayDetached, tokenFor, type NamedPlace, type PlaceEntry, type Places, type SessionEntry } from './record.ts'
@@ -466,7 +467,7 @@ function readKehikko(raw: unknown): Kehikko | null | undefined {
 /** A place off the wire, or null. Ids and the kehikko's key are checked; the names — the kehikko's, the parts' — are labels and only bounded. */
 export function readPlace(raw: unknown): NamedPlace | null {
   if (typeof raw !== 'object' || raw === null) return null
-  const said = raw as { epic?: unknown; parts?: unknown; kehikko?: unknown; kehikkoName?: unknown; kehikkoId?: unknown; partNames?: unknown }
+  const said = raw as { epic?: unknown; parts?: unknown; kehikko?: unknown; kehikkoName?: unknown; kehikkoId?: unknown; partNames?: unknown; space?: unknown }
   const epic = said.epic ?? null
   if (epic !== null && (typeof epic !== 'string' || !SLUG.test(epic))) return null
   const parts = said.parts ?? []
@@ -484,6 +485,7 @@ export function readPlace(raw: unknown): NamedPlace | null {
     kehikko,
     kehikkoName: typeof said.kehikkoName === 'string' ? said.kehikkoName.slice(0, 120) : undefined,
     ...(partNames?.some(Boolean) ? { partNames } : {}),
+    ...(readSpace(said.space) ? { space: readSpace(said.space) } : {}),
     /* The host's row number, carried only to be written beside a key as a note. */
     ...(kehikko && 'key' in kehikko && typeof said.kehikkoId === 'number' && Number.isSafeInteger(said.kehikkoId) ? { kehikkoId: said.kehikkoId } : {}),
   }
@@ -819,6 +821,8 @@ export interface Notice {
   kehikko: string
   /** The picked parts' ids, as the place holds them (a press goes by id, never by name). */
   partIds?: string[]
+  /** The space the place is, as the host said it (root first), for the notice's words. */
+  space?: SpaceStep[]
   /** The kehikko's key, when the place is held by one. */
   kehikkoKey?: string | null
   /** What it needs, when its turn ended needing the person (protocol 2.55.0): "Needs your decision: Merge it?". */
@@ -1757,6 +1761,7 @@ export class Runs {
       parts: at.parts.map((id, index) => at.partNames?.[index] || id),
       kehikko: at.kehikkoName ?? '',
       partIds: [...at.parts],
+      ...(at.space ? { space: at.space } : {}),
       kehikkoKey: at.kehikko && 'key' in at.kehikko ? at.kehikko.key : null,
       at: this.now(),
     })
@@ -3187,6 +3192,7 @@ export class Runs {
       parts: (at?.parts ?? []).map((id, index) => at?.partNames?.[index] || id),
       kehikko: at?.kehikkoName ?? '',
       partIds: [...(at?.parts ?? [])],
+      ...(at?.space ? { space: at.space } : {}),
       kehikkoKey: at?.kehikko && 'key' in at.kehikko ? at.kehikko.key : null,
       ...(asks ? { asks } : {}),
       at: this.now(),
