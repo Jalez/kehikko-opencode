@@ -303,6 +303,9 @@ const ENTER_AFTER = 250
 const ASLEEP_FOR = 24 * 60 * 60_000
 /** How long a session resumed for a message is given to come to its prompt before what came is typed. */
 const RESUME_READY_MS = 60_000
+/** How long a task's new conversation is given for OpenCode to name it, and how often that is asked (`startTask`). */
+const TASK_WAIT = 60_000
+const TASK_EVERY = 250
 /**
  * A line sent to a session and taken: how long a sighting of the prompt has to come after the line
  * to count (a status line may still draw the prompt while the turn begins), and how long after the
@@ -428,6 +431,12 @@ export type Opening =
        * opening frame): nobody is looking at it, so attaching is not a look. Absent: on screen.
        */
       unwatched?: true
+      /**
+       * The first prompt of a NEW session: a task's brief (`startTask`, protocol 2.88.0
+       * `agent.tasks`). Set only by this server, never read off the wire (`opening`): no page can
+       * hand a session words to send.
+       */
+      prompt?: string
       cols: number
       rows: number
     }
@@ -1189,6 +1198,8 @@ export interface RunsOptions {
   configBase?: string
   /** Asks the host who provides the work queue (`askedProviders`, protocol 2.81.0); a test stands one in. Absent: none is provided. */
   services?: FindProviders
+  /** How long `startTask` waits for OpenCode to name a task's conversation (`TASK_WAIT`); a test gives less. */
+  taskWait?: number
 }
 
 /**
@@ -2030,6 +2041,62 @@ export class Runs {
     return false
   }
 
+  /**
+   * A new conversation for one of Kehikot's own tasks (protocol 2.88.0, `agent.tasks`): started the
+   * way a place starts one (`start`), with no viewer, filed under `place` once OpenCode names it
+   * (`settle`, `born`), and fed `brief` as its first prompt. OpenCode chooses the id when that prompt
+   * is sent, so this waits for it — the id `conversations.finder` and the view use — and says why
+   * not when it does not come. A conversation that names itself later is still filed under `place`.
+   */
+  async startTask(projectPath: string, place: NamedPlace, brief: string, title: string): Promise<{ ok: true; session: string } | { ok: false; why: string }> {
+    const root = projectRoot(projectPath)
+    if (!root.ok) return { ok: false, why: root.error }
+    this.know(root.value)
+    const run = await this.start(root.value, this.program.newId(), {
+      what: 'session',
+      projectPath: root.value,
+      projectId: projectIdAt(root.value),
+      place,
+      session: null,
+      unwatched: true,
+      prompt: brief,
+      cols: 120,
+      rows: 40,
+    })
+    if ('code' in run) return { ok: false, why: run.why }
+    this.log(`opencode: started ${run.id} in ${root.value} for a task of Kehikot's${title ? ` (${title.slice(0, 80)})` : ''}`)
+    for (let tries = Math.ceil((this.options.taskWait ?? TASK_WAIT) / TASK_EVERY); tries > 0 && !run.ended; tries -= 1) {
+      if (!run.settled) await this.settle(run).catch(() => {})
+      if (run.settled) return { ok: true, session: run.settled }
+      await new Promise((done) => setTimeout(done, TASK_EVERY))
+    }
+    if (run.ended) return { ok: false, why: `${this.program.name} ended before it started the conversation.` }
+    return { ok: false, why: `${this.program.name} started, but has not named the conversation yet; it is filed under its place once it does.` }
+  }
+
+  /**
+   * A conversation this process holds the terminal of gains a place at once (protocol 2.88.0,
+   * `conversations.bring`): what its doors and notes say of its place from now on. False when no
+   * run here holds it — it gains the place the next time this module opens it.
+   */
+  rehome(id: string, place: NamedPlace | null): boolean {
+    const run = this.find(id)
+    if (!run || run.ended) return false
+    if (place) {
+      run.at = place
+      run.key = placeKey(place)
+    }
+    this.changed()
+    return true
+  }
+
+  /** Where a conversation this process runs is: what the page shows a task's conversation with (`/api/tasks/view`). */
+  taskView(id: string): { projectPath: string; projectId: string | null; place: NamedPlace } | null {
+    const run = this.find(id)
+    if (!run || run.ended) return null
+    return { projectPath: run.projectPath, projectId: run.projectId ?? null, place: run.at ?? run.place ?? (run.key ? readPlaceKey(run.key) : null) ?? { epic: null, parts: [], kehikko: null } }
+  }
+
   /** Whether the person allowed the session behind a token to act on messages (protocol 2.43.0): its project's setting. */
   actsOnMessages(token: string): boolean {
     const started = this.startedOf(token)
@@ -2576,6 +2643,10 @@ export class Runs {
       ...(settled ? this.program.resume(settled) : this.program.fresh(id)),
       /* The project's own choices of model and agent (settings.ts); nothing that widens a permission. */
       ...(able.configures ? sessionFlags(settings) : []),
+      /* A task's brief, as its first prompt: OpenCode's TUI takes `--prompt` on its home screen, a new
+         session, and sends it (README, "Verified against OpenCode v1.19.5"). Last, so `readPs` stops
+         before its words. Never beside `--session`. */
+      ...(asked.prompt && !settled ? ['--prompt', asked.prompt] : []),
     ]
     let pty: Pty
     let screen: Screen

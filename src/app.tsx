@@ -35,6 +35,7 @@ import {
   type View,
 } from './view/places.ts'
 import { TerminalView, type Said, type Standing } from './view/terminal-view.tsx'
+import { TaskView, taskSession } from './view/task-view.tsx'
 import { findSlot, type FindSlot } from 'kehikot-module-protocol/client/find'
 import { Button } from '@/components/ui/button'
 
@@ -191,6 +192,9 @@ export function App() {
   )
   /* The modules on this kehikko, as one steady string: a change is what offers "Restart to load …". */
   const containers = host.containers.map((one) => one.module).sort().join(',')
+  /* One conversation on its own, for one of Kehikot's tasks (`agent.tasks`' view): no greeting needed. */
+  const task = useMemo(() => taskSession(window.location.search), [])
+  if (task) return <TaskView session={task} theme={host.theme} onDrawn={host.ready} />
   return <Sessions theme={host.theme} at={at} cover={cover} hosted={hosted} canvasEpic={epic} containers={containers} show={shown} covered={host.covered} visible={host.visible} finder={finder} onFound={host.findResult} onDrawn={host.ready} />
 }
 
