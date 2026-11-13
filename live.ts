@@ -1231,6 +1231,8 @@ export class Runs {
   private readonly followers = new Set<Follower>()
   /** Notices no page was there to take, oldest first. */
   private readonly held: Notice[] = []
+  /** The message delivery running for this server, when there is one: the host's knock asks it to look now. */
+  delivery: { tick(): Promise<number> } | null = null
   private noticed = 0
   /** The last activity list handed to each follower, as text, so that only a change is said. */
   private readonly activityIs = new Map<Follower, string>()
@@ -3610,7 +3612,10 @@ export function theRuns(log: (line: string) => void = () => {}): Runs {
   /* OpenCode's Enter steers a line typed during a turn INTO the turn; queueing it needs the person's
      leader chord (`<leader>return`, configurable). A message never steers a turn: a working session
      is typed into once it is back at its prompt (protocol 2.48.0, `queues: false`). */
-  messageDelivery({ module: 'kehikot.opencode', queues: false, sessions: () => runs.deliverySessions(), type: (key, text) => runs.deliver(key, text), resume: (key, text) => runs.resumeFor(key, text), log }).start()
+  const delivery = messageDelivery({ module: 'kehikot.opencode', queues: false, sessions: () => runs.deliverySessions(), type: (key, text) => runs.deliver(key, text), resume: (key, text) => runs.resumeFor(key, text), log })
+  /* The host's knock (`agent.delivery`, protocol 2.96.0) runs a look at once instead of waiting for the next one. */
+  runs.delivery = delivery
+  delivery.start()
   /* The projects this module keeps conversations in, from the host at start (protocol 2.76.0): delivery
      reaches an asleep conversation there before anybody opens that project again. */
   keptProjects(runs, { log }).start()
