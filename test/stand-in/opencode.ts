@@ -39,6 +39,16 @@ if (argv[0] === '--help') {
   process.exit(0)
 }
 
+/*
+ * A program slow to boot, or one that cannot start (protocol 2.99.0's conformance): STANDIN_BOOT_MS
+ * before anything else, and with STANDIN_BOOT_FAILS it then says why and exits non-zero.
+ */
+if (process.env.STANDIN_BOOT_MS) await new Promise((done) => setTimeout(done, Number(process.env.STANDIN_BOOT_MS)))
+if (process.env.STANDIN_BOOT_FAILS) {
+  process.stderr.write('Error: stand-in opencode could not start: no provider configured\n')
+  process.exit(1)
+}
+
 const flag = (name: string, short?: string): string | null => {
   const at = argv.findIndex((one) => one === name || (short !== undefined && one === short))
   return at >= 0 ? (argv[at + 1] ?? null) : null

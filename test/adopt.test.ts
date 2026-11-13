@@ -47,6 +47,7 @@ function needs(listing: Recorded[], options: { held?: string[]; running?: string
     rehome: (session, place) => (rehomed.push({ session, place }), held.has(session)),
     told: (projectPath) => told.push(projectPath),
     start: async (projectPath, place, brief, title) => (started.push({ projectPath, place, brief, title }), { ok: true, session: D }),
+    report: { env: { KEHIKOT_HOST: 'http://127.0.0.1:9' }, log: () => {} },
   }
   return { given, rehomed, told, started }
 }
@@ -198,7 +199,11 @@ describe('the door: only Kehikot’s own server', () => {
     }
     expect(conversationsFindResult.parse(await ask(FIND_PATH, { project: dir, refs: ['!7'] })).conversations[0]).toMatchObject({ session: A, match: 'mentioned' })
     expect(conversationsBringResult.parse(await ask(BRING_PATH, { project: dir, session: A, to: THERE, from: null })).outcome).toBe('brought')
-    expect(agentTaskStartResult.parse(await ask(START_PATH, { project: dir, brief: 'Adopt !7', place: THERE, title: 'Adopt' }))).toEqual({ outcome: 'started', session: D, why: '' })
+    /* Accepted at once (protocol 2.99.0), under the id its run will have; started after the answer. */
+    const accepted = agentTaskStartResult.parse(await ask(START_PATH, { project: dir, brief: 'Adopt !7', place: THERE, title: 'Adopt' }))
+    expect(accepted).toMatchObject({ outcome: 'started', why: '', pending: true })
+    expect(PROGRAM.isId(accepted.session!) || /^[0-9a-f-]{36}$/.test(accepted.session!)).toBe(true)
+    await new Promise((done) => setTimeout(done, 20))
     expect(started).toEqual([{ projectPath: dir, place: named(THERE), brief: 'Adopt !7', title: 'Adopt' }])
   })
 
@@ -287,10 +292,11 @@ describe('start: a new conversation fed the brief, the way a place starts one', 
     expect(read.ok && read.value.sessions[C]?.home).toBe('epic=-;parts=-;kehikko=-')
   })
 
-  test('a conversation OpenCode never names in time is declined, with why', async () => {
+  test('a conversation OpenCode never names in time, still running, is under way under its run’s id (protocol 2.99.0)', async () => {
     const dir = project()
     const w = world()
-    expect(await w.runs.startTask(dir, named(THERE), 'brief', 't')).toMatchObject({ ok: false })
+    const said = await w.runs.startTask(dir, named(THERE), 'brief', 't', 'ses_kehikotgiven0000000000000000')
+    expect(said).toEqual({ ok: true, session: 'ses_kehikotgiven0000000000000000' })
   })
 
   test('the words of a brief are never read as a process’s session (`readPs`)', () => {
