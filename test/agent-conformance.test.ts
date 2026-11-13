@@ -1,14 +1,15 @@
 import { afterAll, test } from 'bun:test'
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 
 import { expectAgentConformance } from 'kehikot-module-protocol/testing'
 
-import { answer } from '../doors.ts'
+import { HOST_DOOR, answer } from '../doors.ts'
+import { START_PATH } from '../adopt.ts'
 import { freshToken } from '../doorConfig.ts'
 import { here, type HereNeeds } from '../here.ts'
-import { Runs, headless } from '../live.ts'
+import { Runs, headless, theRuns } from '../live.ts'
 import { ID, MANIFEST } from '../manifest.ts'
 import { placeKey } from '../place.ts'
 import { PROGRAM, type Active, type Program } from '../program.ts'
@@ -29,6 +30,43 @@ const dir = () => {
 afterAll(() => {
   for (const one of made) rmSync(one, { recursive: true, force: true })
 })
+
+
+/**
+ * Protocol 2.99.0, the END-TO-END proof of `agent.tasks` with no fake provider on this module's side:
+ * the host's request goes through this module's real door (the vouch round trip to the stand-in host,
+ * the body, the start), the real `Runs` and the real program.ts, which runs the stand-in opencode
+ * (test/stand-in) taking 20 s to boot. `start` must answer within a second, accepting; a stand-in that
+ * fails must reach the host as `tasks.report` failed, with why; one that boots as started.
+ */
+function standIn(behaviour: { bootMs: number; fails?: boolean }): () => void {
+  const bin = dir()
+  for (const name of ['opencode', 'opencode.ts']) {
+    copyFileSync(join(import.meta.dir, 'stand-in', name), join(bin, name))
+    chmodSync(join(bin, name), 0o755)
+  }
+  const had = { PATH: process.env.PATH, STANDIN_BOOT_MS: process.env.STANDIN_BOOT_MS, STANDIN_BOOT_FAILS: process.env.STANDIN_BOOT_FAILS }
+  process.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ''}`
+  process.env.STANDIN_BOOT_MS = String(behaviour.bootMs)
+  if (behaviour.fails) process.env.STANDIN_BOOT_FAILS = '1'
+  else delete process.env.STANDIN_BOOT_FAILS
+  return () => {
+    for (const [name, value] of Object.entries(had)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    for (const run of theRuns().sessions()) theRuns().end(run.id)
+  }
+}
+
+/** A request from the host to `start`, through this module's real door. */
+async function startThroughTheDoor(body: unknown, headers: Record<string, string>): Promise<{ status: number; body: unknown }> {
+  const url = new URL(`http://127.0.0.1:1${START_PATH}`)
+  const request = new Request(url, { method: 'POST', headers, body: JSON.stringify(body) })
+  const said = await HOST_DOOR(request, { url } as never)
+  if (!said) return { status: 404, body: null }
+  return { status: said.status, body: await said.json().catch(() => null) }
+}
 
 const OUTSIDE = 'ses_44444444444444444444444444444444'
 const LAUNCHED = 'ses_55555555555555555555555555555555'
@@ -64,5 +102,9 @@ test('meets the agent-module conformance', async () => {
       host.issued.set(token, { module: ID, project })
       return { token }
     },
+    tasks: {
+      start: startThroughTheDoor,
+      program: async (behaviour) => standIn(behaviour),
+    },
   })
-})
+}, 60_000)

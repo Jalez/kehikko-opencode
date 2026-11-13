@@ -10,9 +10,10 @@ import {
   type ConversationsBringResult,
   type ConversationsFindParams,
 } from 'kehikot-module-protocol'
-import { vouchHost, type Before, type VouchHostOptions } from 'kehikot-module-protocol/serve'
+import { acceptTask, vouchHost, type Before, type VouchHostOptions } from 'kehikot-module-protocol/serve'
 
 import { freshToken } from './doorConfig.ts'
+import { ID } from './manifest.ts'
 import { placeKey, readPlaceKey } from './place.ts'
 import type { Program } from './program.ts'
 import { assign, disconnect, homeOf, projectRoot, readPlaces, recordedIds, tokenFor, type NamedPlace, type Places } from './record.ts'
@@ -67,15 +68,17 @@ const REASON_CHARS = 200
 const MOST_BODY = 256 * 1024
 
 export interface AdoptNeeds {
-  program: Pick<Program, 'name' | 'isId' | 'sessions' | 'find' | 'supports' | 'active'>
+  program: Pick<Program, 'name' | 'isId' | 'sessions' | 'find' | 'supports' | 'active'> & Partial<Pick<Program, 'newId'>>
   /** Whether this process holds the terminal of a conversation now. */
   holds(session: string): boolean
   /** A held conversation gains a place at once (`Runs.rehome`); false when none is held. */
   rehome(session: string, place: NamedPlace | null): boolean
   /** The record changed under a project: the page and the lists are told (`Runs.told`). */
   told(projectPath: string, assigned?: { key: string; session: string }): void
-  /** Start a new conversation fed a brief (`Runs.startTask`). */
-  start(projectPath: string, place: NamedPlace, brief: string, title: string): Promise<{ ok: true; session: string } | { ok: false; why: string }>
+  /** Start a new conversation fed a brief (`Runs.startTask`), its run under `id` when given (what `start` answered). */
+  start(projectPath: string, place: NamedPlace, brief: string, title: string, id?: string): Promise<{ ok: true; session: string } | { ok: false; why: string }>
+  /** Where `tasks.report` goes, for a test (the host this module was started by, otherwise). */
+  report?: { env?: Record<string, string | undefined>; fetch?: typeof fetch; log?: (line: string) => void }
 }
 
 /* ------------------------------------------------------------------------ *
@@ -226,11 +229,26 @@ export async function bring(asked: { project: string; session: string; to: Conve
  * ------------------------------------------------------------------------ */
 
 /** `POST start`: a new conversation fed the brief, filed under the place. */
+/**
+ * `start`, answered at once (protocol 2.99.0): declined when the folder is no project or OpenCode is not
+ * installed, else ACCEPTED under the id its run will have, and OpenCode is started after the answer — it
+ * boots and is waited for until it names the conversation (up to a minute), which was far longer than
+ * the host waits: the person was told OpenCode did not answer while the conversation started anyway.
+ * What it came to goes to the host as `tasks.report`, which says a failure in the person's Inbox.
+ */
 export async function start(asked: { project: string; brief: string; place: ConversationPlace | null; title: string }, needs: AdoptNeeds): Promise<AgentTaskStartResult> {
   const root = projectRoot(asked.project)
-  if (!root.ok) return { outcome: 'declined', session: null, why: root.error }
-  const started = await needs.start(root.value, namedPlace(asked.place), asked.brief, asked.title)
-  return started.ok ? { outcome: 'started', session: started.session, why: '' } : { outcome: 'declined', session: null, why: started.why.slice(0, REASON_CHARS) }
+  if (!root.ok) return { outcome: 'declined', session: null, why: root.error.slice(0, REASON_CHARS), pending: false }
+  if (!needs.program.find().file) return { outcome: 'declined', session: null, why: `${needs.program.name} is not installed on this computer.`, pending: false }
+  const id = needs.program.newId?.() ?? crypto.randomUUID()
+  return acceptTask(
+    id,
+    async () => {
+      const started = await needs.start(root.value, namedPlace(asked.place), asked.brief, asked.title, id)
+      return started.ok ? { ok: true, conversation: started.session } : { ok: false, why: started.why.slice(0, REASON_CHARS) }
+    },
+    { module: ID, ...needs.report, log: needs.report?.log ?? ((line) => console.log(`opencode: ${line}`)) },
+  )
 }
 
 /* ------------------------------------------------------------------------ *
