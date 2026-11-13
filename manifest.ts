@@ -49,6 +49,12 @@ export const HELP = {
 }
 
 export const ID = 'kehikot.opencode'
+
+/** Where the host knocks when it has kept a message for a project (`agent.delivery`, protocol 2.96.0). */
+export const DELIVER_PATH = '/api/delivery/deliver'
+
+/** How a conversation started outside Kehikot is placed with this module, said to one the host does not know (`agent.delivery`'s `adopt`). */
+export const ADOPT = 'Type /kehikot-here in it.'
 /** The module's version: package.json's, the one place it is written. A release is tagged with it. */
 export const VERSION: string = pkg.version
 
@@ -178,5 +184,7 @@ export const MANIFEST: Manifest = manifestSchema.parse({
   services: {
     'conversations.finder': { name: 'OpenCode', program: 'OpenCode', find: '/api/conversations/find', bring: '/api/conversations/bring' },
     'agent.tasks': { name: 'OpenCode', program: 'OpenCode', start: '/api/tasks/start', view: '/app?session={session}' },
+    /* Messaging is the host's (protocol 2.96.0); this module delivers to its conversations and places an outside one (`/kehikot-here`). */
+    'agent.delivery': { name: 'OpenCode', program: 'OpenCode', deliver: DELIVER_PATH, adopt: ADOPT },
   },
 })
