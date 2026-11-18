@@ -5,7 +5,7 @@ import { delimiter, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 
 import { BREW_LINE, CURL_LINE, PROGRAM, WORDS, databaseFile, dataDir, deniedWrite, folderOfRecord, hasBrew, headOf, home, installFor, isDefaultTitle, learnSession, nativeOf, npmPrefix, readPs, recordFile, sessionName, sessionsQuery, versionOf } from '../program.ts'
-import { DATA, HOME } from './setup.ts'
+import { DATA, HOME, MACHINE } from './setup.ts'
 import { T0, retitle, typed, writeRollout } from './transcripts.ts'
 
 /**
@@ -51,7 +51,7 @@ describe('finding the binary', () => {
     const none = PROGRAM.find({ HOME, PATH: '/usr/bin', KEHIKOT_OPENCODE_TOOL_DIRS: '' })
     expect(none.file).toBeNull()
     expect(none.usual[0]).toBe(join(HOME, '.opencode', 'bin'))
-    expect(none.usual).toContain('/opt/homebrew/bin')
+    expect(none.usual).toContain(join(MACHINE, '/opt/homebrew/bin'))
   })
 
   test('an npm launcher is run as the native binary behind it, so no `node` has to be on PATH', () => {
