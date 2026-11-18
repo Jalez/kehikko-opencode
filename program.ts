@@ -202,13 +202,23 @@ export function databaseFile(env: NodeJS.ProcessEnv = process.env): string {
  * The places an install usually lands that a thin PATH leaves out: the installer's own folder
  * (`~/.opencode/bin`), `~/.local/bin`, Homebrew's, npm's and Bun's global bins.
  */
+/**
+ * A place outside the home folder (Homebrew's prefixes). `KEHIKOT_OPENCODE_ROOT` puts them under a folder of
+ * its own, so a test looks in places that are empty rather than in this machine's real Homebrew (the home
+ * folder is already the test's own). Unset, as it is in the app, they are the real places.
+ */
+function onThisMachine(env: NodeJS.ProcessEnv, path: string): string {
+  const root = env.KEHIKOT_OPENCODE_ROOT ?? process.env.KEHIKOT_OPENCODE_ROOT
+  return root ? join(root, path) : path
+}
+
 function usualDirs(env: NodeJS.ProcessEnv): string[] {
   const at = home(env)
   return [
     join(at, '.opencode', 'bin'),
     join(at, '.local', 'bin'),
-    '/opt/homebrew/bin',
-    '/usr/local/bin',
+    onThisMachine(env, '/opt/homebrew/bin'),
+    onThisMachine(env, '/usr/local/bin'),
     join(at, '.npm-global', 'bin'),
     join(at, '.bun', 'bin'),
   ]
@@ -227,7 +237,7 @@ function installPath(env: NodeJS.ProcessEnv): string {
  */
 function toolDirs(env: NodeJS.ProcessEnv): string[] {
   const said = env.KEHIKOT_OPENCODE_TOOL_DIRS
-  return said === undefined ? ['/opt/homebrew/bin', '/usr/local/bin'] : said.split(delimiter).filter(Boolean)
+  return said === undefined ? [onThisMachine(env, '/opt/homebrew/bin'), onThisMachine(env, '/usr/local/bin')] : said.split(delimiter).filter(Boolean)
 }
 
 function runnable(file: string): boolean {

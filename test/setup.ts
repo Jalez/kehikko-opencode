@@ -1,3 +1,6 @@
+/* The shared test preload (protocol 2.104.0): the running app's environment never reaches a test. */
+import 'kehikot-module-protocol/testing/setup'
+
 import { existsSync, mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -28,6 +31,10 @@ delete process.env.OPENCODE_CONFIG_DIR
 process.env.KEHIKOT_TEST_BUN = process.execPath
 process.env.KEHIKOT_MODULES_DIR = join(SCRATCH, 'modules')
 process.env.PATH = '/usr/bin:/bin'
+/* The places outside the home folder (Homebrew's prefixes) are looked for under an empty folder of the test's own: a Mac with this agent installed there finds nothing. */
+export const MACHINE = join(SCRATCH, 'machine')
+mkdirSync(MACHINE, { recursive: true })
+process.env.KEHIKOT_OPENCODE_ROOT = MACHINE
 /* No host: a test that wants one stands one in. Port 9 refuses at once. */
 process.env.KEHIKOT_ORIGINS = 'http://127.0.0.1:9'
 /* Neither this machine's Homebrew nor its npm is looked for, or run. */
