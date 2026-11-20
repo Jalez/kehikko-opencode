@@ -7,7 +7,7 @@ import { join } from 'node:path'
 
 import { answer } from '../doors.ts'
 import { removeKit } from '../skills.ts'
-import { RESUME_LINE, Runs, TICKET, headless, type Pty, type Run, type Viewer } from '../live.ts'
+import { RESUME_LINE, Runs, TICKET, headless, type Pty, type Viewer } from '../live.ts'
 import { PROGRAM, type Active, type Program, type Recorded } from '../program.ts'
 import { born, markSession, readPlaces, readSettings, writeSettings, type NamedPlace } from '../record.ts'
 import { DEFAULTS } from '../settings.ts'
