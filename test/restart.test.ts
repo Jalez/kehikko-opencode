@@ -117,7 +117,6 @@ function machine() {
 }
 
 const open = (projectPath: string, session: string | null) => ({ what: 'session' as const, projectPath, place: HERE, session, cols: 100, rows: 30 })
-const isRun = (opened: unknown): opened is Run => typeof opened === 'object' && opened !== null && 'pty' in opened
 const entryOf = (dir: string, id: string) => {
   const read = readPlaces(dir)
   if (!read.ok) throw new Error(read.error)
@@ -131,7 +130,7 @@ const wasWorking = (dir: string, id: string) =>
   })
 
 describe('a conversation a restart cut off mid-turn', () => {
-  test('is said in the Inbox, and told what happened — once — when its place is next opened', async () => {
+  test('is woken in the background with one sentence, at once, with nobody opening its place (protocol 2.110.0)', async () => {
     const m = machine()
     const dir = project()
     m.records(dir, A)
@@ -142,27 +141,25 @@ describe('a conversation a restart cut off mid-turn', () => {
     second.runs.know(dir)
     await second.runs.recovered(dir)
     expect(entryOf(dir, A)?.working).toBeUndefined()
-    expect(entryOf(dir, A)?.resumeLine).toBe(true)
-    const row = second.runs.activity(dir).find((one) => one.id === `cut-off:${A}`)
-    expect(row).toMatchObject({ state: 'attention', label: 'tighten the methods: its turn was cut off when Kehikot restarted', place: { epic: 'thesis', parts: ['methods'], kehikko: '4072c9e5' } })
-    /* Nothing is started by itself: OpenCode has no background to wake it in. */
-    expect(second.ptys).toHaveLength(0)
-
-    /* The person opens it: resumed with this module's one sentence, and the line goes. */
-    const run = await second.runs.open(open(dir, A), new Watcher())
-    expect(isRun(run)).toBe(true)
+    /* Started by itself, unwatched; the plugin says the sentence to it. */
+    for (let i = 0; i < 80 && second.ptys.length === 0; i++) await new Promise((done) => setTimeout(done, 25))
     expect(second.ptys[0]!.args).toEqual(['--session', A])
     expect(second.ptys[0]!.env.KEHIKOT_OPENCODE_SAY).toBe(RESUME_LINE)
     expect(second.ptys[0]!.env.KEHIKOT_OPENCODE_SAY_TO).toBe(A)
     expect(entryOf(dir, A)?.resumeLine).toBeUndefined()
     expect(second.runs.activity(dir).some((one) => one.id === `cut-off:${A}`)).toBe(false)
 
-    /* Once: opened again, it is resumed as any other. */
+    /* Once: the next start does not wake it again. */
     second.ptys[0]!.kill()
     await settle()
-    await second.runs.open(open(dir, A), new Watcher())
-    expect(second.ptys[1]!.args).toEqual(['--session', A])
-    expect(second.ptys[1]!.env.KEHIKOT_OPENCODE_SAY).toBeUndefined()
+    const third = m.module()
+    third.runs.know(dir)
+    await third.runs.recovered(dir)
+    await new Promise((done) => setTimeout(done, 100))
+    expect(third.ptys).toHaveLength(0)
+    second.runs.endAll()
+    third.runs.endAll()
+    await settle()
   })
 
   test('not told when the person turned the setting off: the Inbox line says it, and opening it is a plain resume', async () => {
