@@ -1,3 +1,5 @@
+import { isResumeLine } from 'kehikot-module-protocol'
+
 /**
  * What a conversation's own record says about how it ended — kept from the Codex module, whose
  * transcripts it read, for the shape the record and the page share.
@@ -65,7 +67,7 @@ export function lastPrompt(text: string, except: readonly string[] = []): number
   for (const row of rows(text)) {
     if (row.type !== 'event_msg' || row.payload?.type !== 'item_completed' || row.payload.item?.type !== 'UserMessage') continue
     const words = said(row).trim()
-    if (!words || except.some((line) => words === line)) continue
+    if (!words || isResumeLine(words) || except.some((line) => words === line)) continue
     const at = timeOf(row)
     if (Number.isFinite(at) && at > last) last = at
   }
