@@ -269,6 +269,8 @@ describe('an Inbox line about a conversation ends once the person is in it', () 
     m.records(dir, A)
     born(dir, HERE, A, null, { label: 'tighten the methods' })
     wasWorking(dir, A)
+    /* Resuming off: the line is left for the person, which is what these follow (woken, it is told at once). */
+    writeSettings(dir, { ...readSettings(dir), resumeCutOff: false })
     const first = m.module({ now: () => clock.at })
     first.runs.know(dir)
     await first.runs.recovered(dir)
